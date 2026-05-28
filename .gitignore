@@ -1,0 +1,23 @@
+# ─── Build artifacts ──────
+*.exe
+gemini-web2api-go
+gemini-web2api
+
+# ─── Runtime data ─────────
+data/
+*.db
+*.db-shm
+*.db-wal
+cookie.txt
+*.log
+tmp_*
+
+# ─── Docker ───────────────
+.env
+
+# ─── IDE ──────────────────
+.vscode/
+.idea/
+
+# ─── Go cache ─────────────
+vendor/

@@ -1,0 +1,176 @@
+package main
+
+import (
+	"errors"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type Proxy struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Enabled    bool   `json:"enabled"`
+	Weight     int    `json:"weight"`
+	FailCount  int    `json:"fail_count"`
+	LastUsed   int64  `json:"last_used"`
+	LastError  string `json:"last_error"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+var (
+	proxyMu      sync.RWMutex
+	proxyCache   []Proxy
+	proxyCursor  uint64
+)
+
+// loadProxies refreshes the in-memory proxy list from DB.
+func loadProxies() {
+	rows, err := getDB().Query(`SELECT id, name, url, enabled, weight, fail_count,
+        IFNULL(last_used,0), IFNULL(last_error,''), created_at FROM proxies ORDER BY id`)
+	if err != nil {
+		logf("[proxy] load failed: %v", err)
+		return
+	}
+	defer rows.Close()
+	var list []Proxy
+	for rows.Next() {
+		var p Proxy
+		var enabled int
+		if err := rows.Scan(&p.ID, &p.Name, &p.URL, &enabled, &p.Weight, &p.FailCount,
+			&p.LastUsed, &p.LastError, &p.CreatedAt); err != nil {
+			continue
+		}
+		p.Enabled = enabled == 1
+		list = append(list, p)
+	}
+	proxyMu.Lock()
+	proxyCache = list
+	proxyMu.Unlock()
+}
+
+// pickProxy returns the next enabled proxy via round-robin. (id=0 if none).
+// The rotation skips proxies with fail_count >= 5 (circuit breaker).
+func pickProxy() (Proxy, bool) {
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	if len(proxyCache) == 0 {
+		return Proxy{}, false
+	}
+	var pool []Proxy
+	for _, p := range proxyCache {
+		if p.Enabled && p.FailCount < 5 {
+			pool = append(pool, p)
+		}
+	}
+	if len(pool) == 0 {
+		return Proxy{}, false
+	}
+	idx := atomic.AddUint64(&proxyCursor, 1) - 1
+	return pool[int(idx)%len(pool)], true
+}
+
+func recordProxyResult(id int64, success bool, errStr string) {
+	if id == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	if success {
+		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=0, last_used=?, last_error='' WHERE id=?`, now, id)
+	} else {
+		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=fail_count+1, last_used=?, last_error=? WHERE id=?`,
+			now, errStr, id)
+	}
+	loadProxies()
+}
+
+// CRUD ───────────────────────────────────────────────────────────────────────
+
+func proxyCreate(name, url string, weight int) (int64, error) {
+	if name == "" || url == "" {
+		return 0, errors.New("name and url required")
+	}
+	if weight <= 0 {
+		weight = 1
+	}
+	res, err := getDB().Exec(`INSERT INTO proxies(name, url, enabled, weight, created_at)
+        VALUES (?,?,?,?,?)`, name, url, 1, weight, time.Now().Unix())
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	loadProxies()
+	return id, nil
+}
+
+func proxyUpdate(id int64, name, url string, enabled *bool, weight *int) error {
+	q := `UPDATE proxies SET `
+	args := []interface{}{}
+	parts := []string{}
+	if name != "" {
+		parts = append(parts, "name=?")
+		args = append(args, name)
+	}
+	if url != "" {
+		parts = append(parts, "url=?")
+		args = append(args, url)
+	}
+	if enabled != nil {
+		v := 0
+		if *enabled {
+			v = 1
+		}
+		parts = append(parts, "enabled=?")
+		args = append(args, v)
+	}
+	if weight != nil {
+		parts = append(parts, "weight=?")
+		args = append(args, *weight)
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	q += joinComma(parts) + " WHERE id=?"
+	args = append(args, id)
+	_, err := getDB().Exec(q, args...)
+	if err == nil {
+		loadProxies()
+	}
+	return err
+}
+
+func proxyDelete(id int64) error {
+	_, err := getDB().Exec(`DELETE FROM proxies WHERE id=?`, id)
+	if err == nil {
+		loadProxies()
+	}
+	return err
+}
+
+func proxyResetFailures(id int64) error {
+	_, err := getDB().Exec(`UPDATE proxies SET fail_count=0, last_error='' WHERE id=?`, id)
+	if err == nil {
+		loadProxies()
+	}
+	return err
+}
+
+func listProxies() []Proxy {
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	out := make([]Proxy, len(proxyCache))
+	copy(out, proxyCache)
+	return out
+}
+
+func joinComma(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += ", "
+		}
+		out += p
+	}
+	return out
+}

@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gemini-web2api 管理面板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a1f29; --border: #2a3140;
+    --text: #d8dde6; --muted: #8993a8; --accent: #4f9eff;
+    --green: #4ade80; --red: #f87171; --yellow: #fbbf24;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+         background: var(--bg); color: var(--text); font-size: 14px; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border);
+           padding: 12px 24px; display: flex; align-items: center;
+           justify-content: space-between; }
+  header h1 { font-size: 16px; font-weight: 600; color: var(--accent); }
+  nav { display: flex; gap: 8px; }
+  nav button { background: transparent; border: 1px solid var(--border); color: var(--text);
+               padding: 6px 14px; cursor: pointer; border-radius: 6px;
+               font-size: 13px; transition: all .15s; }
+  nav button:hover { border-color: var(--accent); color: var(--accent); }
+  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+             gap: 12px; margin-bottom: 20px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+         padding: 14px 18px; }
+  .kpi .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                letter-spacing: 0.5px; margin-bottom: 6px; }
+  .kpi .value { font-size: 22px; font-weight: 600; color: var(--text); }
+  .kpi .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+           padding: 20px; margin-bottom: 20px; }
+  .panel h2 { font-size: 14px; margin-bottom: 14px; color: var(--text);
+              display: flex; justify-content: space-between; align-items: center; }
+  .panel h2 .controls { display: flex; gap: 8px; }
+  .panel h2 .controls button, .panel h2 .controls select {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase;
+       background: rgba(0,0,0,0.15); }
+  tr:hover td { background: rgba(79, 158, 255, 0.04); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .badge.ok { background: rgba(74,222,128,0.15); color: var(--green); }
+  .badge.fail { background: rgba(248,113,113,0.15); color: var(--red); }
+  .badge.muted { background: rgba(137,147,168,0.15); color: var(--muted); }
+  .pre { font-family: "Consolas", "Menlo", monospace; font-size: 11.5px;
+         color: var(--muted); white-space: pre-wrap; max-width: 360px;
+         overflow: hidden; text-overflow: ellipsis; }
+  button.btn { background: var(--accent); color: #fff; border: none;
+               padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  button.btn:hover { opacity: 0.9; }
+  button.btn.danger { background: var(--red); }
+  button.btn.muted { background: var(--border); color: var(--text); }
+  input, select { background: var(--bg); border: 1px solid var(--border);
+                  color: var(--text); padding: 6px 10px; border-radius: 4px; font-size: 13px; }
+  input:focus, select:focus { outline: 1px solid var(--accent); }
+  .login-box { max-width: 380px; margin: 100px auto; background: var(--panel);
+               border: 1px solid var(--border); border-radius: 8px; padding: 32px; }
+  .login-box h1 { color: var(--accent); margin-bottom: 20px; font-size: 20px; }
+  .login-box input { width: 100%; padding: 10px; margin-bottom: 12px; }
+  .login-box button { width: 100%; padding: 10px; }
+  .err { color: var(--red); font-size: 12px; margin-top: 8px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  canvas { width: 100% !important; max-height: 320px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px; font-size: 13px; }
+  .truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  details summary { cursor: pointer; color: var(--accent); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, { credentials: 'include', ...opts,
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  if (r.status === 401) { renderLogin(); throw new Error('unauthorized'); }
+  return r.json();
+};
+
+const fmt = {
+  ts: (sec) => new Date(sec * 1000).toLocaleString('zh-CN', { hour12: false }),
+  ms: (ms) => ms == null ? '-' : (ms < 1000 ? ms + 'ms' : (ms/1000).toFixed(2) + 's'),
+  num: (n) => (n || 0).toLocaleString(),
+  pct: (n) => (n * 100).toFixed(1) + '%',
+};
+
+let charts = {};
+const destroyChart = (key) => { if (charts[key]) { charts[key].destroy(); delete charts[key]; } };
+
+// ─── Pages ──────────────────────────────────────────────────────────────────
+
+const pages = {
+  dashboard: async () => {
+    const stats = await api('/admin/api/stats?hours=24');
+    return `
+      <div class="kpi-row">
+        <div class="kpi"><div class="label">24 小时请求数</div><div class="value">${fmt.num(stats.total_requests)}</div></div>
+        <div class="kpi"><div class="label">成功率</div><div class="value">${fmt.pct(stats.success_rate)}</div>
+          <div class="sub">${fmt.num(stats.success)} 成功 / ${fmt.num(stats.failures)} 失败</div></div>
+        <div class="kpi"><div class="label">平均延迟</div><div class="value">${fmt.ms(stats.avg_ms)}</div></div>
+        <div class="kpi"><div class="label">输入 Token</div><div class="value">${fmt.num(stats.prompt_tokens)}</div></div>
+        <div class="kpi"><div class="label">输出 Token</div><div class="value">${fmt.num(stats.output_tokens)}</div></div>
+      </div>
+      <div class="panel">
+        <h2>请求量与延迟趋势
+          <span class="controls">
+            <select id="rangeSel">
+              <option value="24h">最近 24 小时</option>
+              <option value="7d">最近 7 天</option>
+              <option value="30d">最近 30 天</option>
+            </select>
+          </span>
+        </h2>
+        <canvas id="chartReq"></canvas>
+      </div>
+      <div class="grid-2">
+        <div class="panel">
+          <h2>按模型分组</h2>
+          <table>
+            <thead><tr><th>模型</th><th>请求</th><th>成功</th><th>平均</th><th>Token 合计</th></tr></thead>
+            <tbody>${(stats.by_model || []).map(m => `
+              <tr><td>${m.model}</td><td>${fmt.num(m.requests)}</td>
+                  <td>${fmt.num(m.success)}</td><td>${fmt.ms(m.avg_ms)}</td>
+                  <td>${fmt.num(m.prompt_tokens + m.output_tokens)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">暂无数据</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>按代理分组</h2>
+          <table>
+            <thead><tr><th>代理</th><th>请求</th><th>成功</th><th>平均</th></tr></thead>
+            <tbody>${(stats.by_proxy || []).map(p => `
+              <tr><td>${p.proxy === '(direct)' ? '直连' : p.proxy}</td><td>${fmt.num(p.requests)}</td>
+                  <td>${fmt.num(p.success)}</td><td>${fmt.ms(p.avg_ms)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">暂无数据</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  },
+
+  requests: async () => {
+    return `
+      <div class="panel">
+        <h2>请求记录
+          <span class="controls">
+            <select id="reqStatus">
+              <option value="">全部</option>
+              <option value="ok">成功</option>
+              <option value="fail">失败</option>
+            </select>
+            <select id="reqModel"><option value="">全部模型</option></select>
+            <button onclick="loadReqs()">刷新</button>
+          </span>
+        </h2>
+        <table id="reqTable">
+          <thead><tr>
+            <th>时间</th><th>模型</th><th>代理</th><th>状态</th>
+            <th>首字延迟</th><th>总用时</th><th>输入 Token</th><th>输出 Token</th><th>接口</th>
+          </tr></thead>
+          <tbody><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+        </table>
+        <div style="margin-top: 12px; text-align: center;" id="reqPager"></div>
+      </div>
+    `;
+  },
+
+  proxies: async () => {
+    const data = await api('/admin/api/proxies');
+    return `
+      <div class="panel">
+        <h2>代理池
+          <span class="controls"><button class="btn" onclick="addProxy()">+ 添加代理</button></span>
+        </h2>
+        <table>
+          <thead><tr>
+            <th>ID</th><th>名称</th><th>代理 URL</th><th>状态</th>
+            <th>失败次数</th><th>最近错误</th><th>操作</th>
+          </tr></thead>
+          <tbody>${(data.items || []).map(p => `
+            <tr>
+              <td>${p.id}</td>
+              <td>${p.name}</td>
+              <td class="pre truncate">${p.url}</td>
+              <td>${p.enabled ? '<span class="badge ok">已启用</span>' : '<span class="badge muted">已禁用</span>'}</td>
+              <td>${p.fail_count > 0 ? '<span class="badge fail">' + p.fail_count + '</span>' : p.fail_count}</td>
+              <td class="pre truncate">${p.last_error || '-'}</td>
+              <td>
+                <button class="btn muted" onclick="toggleProxy(${p.id})">${p.enabled ? '禁用' : '启用'}</button>
+                <button class="btn muted" onclick="resetProxy(${p.id})">重置</button>
+                <button class="btn danger" onclick="delProxy(${p.id})">删除</button>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="7" class="empty">还没有代理。点击"+ 添加代理"添加。</td></tr>'}
+        </tbody>
+      </table>
+      </div>
+    `;
+  },
+
+  settings: async () => {
+    const k = await api('/admin/api/apikey');
+    return `
+      <div class="panel">
+        <h2>API Key（用于 /v1/* 接口鉴权）</h2>
+        <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">
+          ${k.locked
+            ? '已被启动参数 <code>--api-key</code> 或环境变量 <code>API_KEY</code> 锁定，需修改部署配置才能更换。'
+            : '可在线管理 — 重新生成或自定义。'}
+        </p>
+        <div class="row" style="margin-bottom: 14px;">
+          <input id="apiKeyView" type="password" value="${escapeHtml(k.key)}"
+                 style="flex: 1; min-width: 320px; font-family: 'Consolas', monospace;" readonly />
+          <button class="btn muted" onclick="toggleKeyVis()">显示</button>
+          <button class="btn muted" onclick="copyKey()">复制</button>
+        </div>
+        ${k.locked ? '' : `
+          <div class="row">
+            <button class="btn" onclick="rotateKey()">生成随机 Key</button>
+            <button class="btn muted" onclick="customKey()">自定义 Key</button>
+          </div>
+        `}
+        <div style="margin-top: 16px; padding: 12px; background: var(--bg); border-radius: 6px;">
+          <div style="color: var(--muted); font-size: 12px; margin-bottom: 6px;">使用示例：</div>
+          <pre class="pre" style="margin: 0; font-size: 12px;">curl http://your-host/v1/chat/completions \\
+  -H "Authorization: Bearer YOUR_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"gemini-3.5-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>会话</h2>
+        <p>当前以 cookie 会话登录。</p>
+        <button class="btn danger" onclick="doLogout()">退出登录</button>
+      </div>
+      <div class="panel">
+        <h2>关于</h2>
+        <p>gemini-web2api-go 管理面板 · 单二进制 · SQLite + Chrome 146 指纹模拟 · tiktoken cl100k_base 计算 token。</p>
+      </div>
+    `;
+  },
+};
+
+// ─── Charts + handlers ──────────────────────────────────────────────────────
+
+async function loadChart(range = '24h') {
+  destroyChart('req');
+  const data = await api('/admin/api/timeseries?range=' + range);
+  const labels = (data.series || []).map(s => fmt.ts(s.bucket));
+  const reqs = (data.series || []).map(s => s.requests);
+  const p50 = (data.series || []).map(s => s.p50_ms);
+  const ctx = document.getElementById('chartReq');
+  if (!ctx) return;
+  charts.req = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: '请求数', data: reqs, borderColor: '#4f9eff',
+          backgroundColor: 'rgba(79,158,255,0.1)', yAxisID: 'y', tension: 0.3 },
+        { label: 'P50 延迟 (ms)', data: p50, borderColor: '#fbbf24',
+          backgroundColor: 'rgba(251,191,36,0.1)', yAxisID: 'y1', tension: 0.3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#d8dde6' } } },
+      scales: {
+        x: { ticks: { color: '#8993a8' }, grid: { color: '#2a3140' } },
+        y: { type: 'linear', position: 'left', ticks: { color: '#8993a8' },
+             grid: { color: '#2a3140' }, title: { display: true, text: '请求数', color: '#8993a8' } },
+        y1: { type: 'linear', position: 'right', ticks: { color: '#8993a8' },
+              grid: { drawOnChartArea: false }, title: { display: true, text: 'P50 (ms)', color: '#8993a8' } },
+      },
+    },
+  });
+}
+
+let reqOffset = 0;
+const REQ_PAGE = 50;
+async function loadReqs() {
+  const status = document.getElementById('reqStatus')?.value || '';
+  const model = document.getElementById('reqModel')?.value || '';
+  const url = `/admin/api/requests?limit=${REQ_PAGE}&offset=${reqOffset}` +
+              (status ? '&status=' + status : '') +
+              (model ? '&model=' + encodeURIComponent(model) : '');
+  const data = await api(url);
+  const tbody = document.querySelector('#reqTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = (data.items || []).map(r => `
+    <tr>
+      <td>${fmt.ts(r.ts)}</td>
+      <td>${r.model}</td>
+      <td>${r.proxy_name || '<span class="badge muted">直连</span>'}</td>
+      <td>${r.status === 200 ? '<span class="badge ok">200</span>' : '<span class="badge fail">' + r.status + '</span>'}</td>
+      <td>${fmt.ms(r.ttfb_ms)}</td>
+      <td>${fmt.ms(r.total_ms)}</td>
+      <td>${fmt.num(r.prompt_tokens)}</td>
+      <td>${fmt.num(r.output_tokens)}</td>
+      <td><span class="pre">${escapeHtml(r.endpoint)}${r.stream ? ' <span class="badge muted">stream</span>' : ''}</span>
+        ${r.error ? '<div class="pre" style="color:#f87171; margin-top:4px"><b>错误：</b> ' + escapeHtml(r.error) + '</div>' : ''}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="9" class="empty">还没有请求记录</td></tr>';
+  document.getElementById('reqPager').innerHTML = `
+    <button class="btn muted" ${reqOffset === 0 ? 'disabled' : ''} onclick="reqOffset=Math.max(0,reqOffset-${REQ_PAGE});loadReqs()">← 上一页</button>
+    <span style="margin: 0 12px; color: var(--muted)">${reqOffset+1}-${Math.min(reqOffset+REQ_PAGE, data.total)} / 共 ${data.total} 条</span>
+    <button class="btn muted" ${reqOffset+REQ_PAGE >= data.total ? 'disabled' : ''} onclick="reqOffset+=${REQ_PAGE};loadReqs()">下一页 →</button>
+  `;
+  // populate model dropdown from current page (best-effort)
+  const sel = document.getElementById('reqModel');
+  if (sel && sel.options.length === 1) {
+    const seen = new Set();
+    (data.items || []).forEach(r => seen.add(r.model));
+    [...seen].forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.text = m; sel.appendChild(opt);
+    });
+  }
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function addProxy() {
+  const name = prompt('代理名称（例如 vps-uk-1）：'); if (!name) return;
+  const url = prompt('代理 URL（例如 http://user:pass@1.2.3.4:8080）：'); if (!url) return;
+  await api('/admin/api/proxies', { method: 'POST', body: JSON.stringify({ name, url, weight: 1 }) });
+  await switchPage('proxies');
+}
+async function delProxy(id) {
+  if (!confirm('确定删除代理 ' + id + ' 吗？')) return;
+  await api('/admin/api/proxies/' + id, { method: 'DELETE' });
+  await switchPage('proxies');
+}
+async function toggleProxy(id) {
+  await api('/admin/api/proxies/' + id + '/toggle', { method: 'POST' });
+  await switchPage('proxies');
+}
+async function resetProxy(id) {
+  await api('/admin/api/proxies/' + id + '/reset', { method: 'POST' });
+  await switchPage('proxies');
+}
+async function doLogout() {
+  await api('/admin/api/logout', { method: 'POST' });
+  renderLogin();
+}
+
+// API key actions ──────────────────────────────────────────────────────────
+
+function toggleKeyVis() {
+  const el = document.getElementById('apiKeyView');
+  const btn = el.parentElement.querySelector('button');
+  el.type = el.type === 'password' ? 'text' : 'password';
+  if (btn) btn.textContent = el.type === 'password' ? '显示' : '隐藏';
+}
+
+async function copyKey() {
+  const el = document.getElementById('apiKeyView');
+  try {
+    await navigator.clipboard.writeText(el.value);
+    flash('已复制到剪贴板');
+  } catch (e) {
+    el.type = 'text'; el.select(); document.execCommand('copy');
+    flash('已复制（兼容模式）');
+  }
+}
+
+async function rotateKey() {
+  if (!confirm('生成新的随机 Key？现有客户端在重新配置前将无法访问。')) return;
+  const r = await api('/admin/api/apikey', { method: 'POST' });
+  flash('已生成新 Key');
+  await switchPage('settings');
+  // briefly reveal so user can copy it
+  const el = document.getElementById('apiKeyView');
+  if (el) { el.type = 'text'; }
+}
+
+async function customKey() {
+  const k = prompt('请输入自定义 API Key（至少 20 字符）：');
+  if (!k) return;
+  const r = await fetch('/admin/api/apikey', {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: k }),
+  });
+  const j = await r.json();
+  if (j.ok) { flash('Key 已更新'); await switchPage('settings'); }
+  else alert('错误：' + (j.error || '未知错误'));
+}
+
+function flash(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 1800);
+}
+
+// ─── Routing / shell ────────────────────────────────────────────────────────
+
+async function switchPage(name) {
+  document.querySelectorAll('nav button').forEach(b =>
+    b.classList.toggle('active', b.dataset.page === name));
+  const main = document.getElementById('main');
+  main.innerHTML = '<div class="empty">加载中...</div>';
+  try {
+    main.innerHTML = await pages[name]();
+  } catch (e) {
+    main.innerHTML = '<div class="empty">' + e.message + '</div>'; return;
+  }
+  if (name === 'dashboard') {
+    await loadChart('24h');
+    document.getElementById('rangeSel').onchange = (e) => loadChart(e.target.value);
+  }
+  if (name === 'requests') {
+    reqOffset = 0;
+    document.getElementById('reqStatus').onchange = () => { reqOffset = 0; loadReqs(); };
+    await loadReqs();
+  }
+}
+
+function renderShell() {
+  document.getElementById('app').innerHTML = `
+    <header>
+      <h1>gemini-web2api 管理面板</h1>
+      <nav>
+        <button data-page="dashboard" onclick="switchPage('dashboard')">仪表盘</button>
+        <button data-page="requests" onclick="switchPage('requests')">请求记录</button>
+        <button data-page="proxies" onclick="switchPage('proxies')">代理池</button>
+        <button data-page="settings" onclick="switchPage('settings')">设置</button>
+      </nav>
+    </header>
+    <main id="main"></main>
+  `;
+  switchPage('dashboard');
+}
+
+function renderLogin() {
+  document.getElementById('app').innerHTML = `
+    <div class="login-box">
+      <h1>gemini-web2api 管理面板</h1>
+      <input id="tokenInput" type="password" placeholder="管理员 Token" />
+      <button class="btn" onclick="doLogin()">登录</button>
+      <div id="loginErr" class="err"></div>
+    </div>`;
+  document.getElementById('tokenInput').focus();
+  document.getElementById('tokenInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+}
+
+async function doLogin() {
+  const tok = document.getElementById('tokenInput').value;
+  const r = await fetch('/admin/api/login', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: tok }) });
+  if (r.ok) renderShell();
+  else document.getElementById('loginErr').textContent = 'Token 错误';
+}
+
+// boot — try fetching stats; if 401, login page
+(async () => {
+  const r = await fetch('/admin/api/stats?hours=1', { credentials: 'include' });
+  if (r.ok) renderShell();
+  else renderLogin();
+})();
+</script>
+</body>
+</html>

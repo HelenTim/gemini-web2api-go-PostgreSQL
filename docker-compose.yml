@@ -1,0 +1,60 @@
+services:
+  gemini-web2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gemini-web2api:latest
+    container_name: gemini-web2api
+    restart: unless-stopped
+
+    # 对外暴露：仅 admin/UI 暴露给反代；OpenAI API 走内网给 newapi
+    # 跟 chat2api/cliproxy 一样：用 expose（同 docker network 可访问）
+    # 而不是 ports（公网暴露）
+    expose:
+      - "8083"
+    # 如果想本地直接 curl 调试，取消下面注释把 8083 临时透出来：
+    # ports:
+    #   - "127.0.0.1:8083:8083"
+
+    volumes:
+      - ./data:/data                              # sqlite + cookies 持久化
+      - ./config.json:/app/config.json:ro         # 可选,启动时优先读
+      # - ./cookie.txt:/app/cookie.txt:ro         # 可选,挂 Pro cookie
+
+    environment:
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-change-me-in-production}"
+      TZ: "Europe/London"
+
+    command:
+      - "--db"
+      - "/data/gemini.db"
+      - "--port"
+      - "8083"
+      # 单点代理可在这里写,也可以留空走运行时 proxy pool
+      # - "--proxy"
+      # - "http://upstream-proxy:8080"
+
+    networks:
+      - pante                                     # 跟 newapi/chat2api/cliproxy 同 network
+
+    healthcheck:
+      test: ["CMD", "/app/gemini-web2api", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  pante:
+    external: true
+    name: pante
+    # 第一次部署如果 pante network 还没建,把 external: true 改成下面三行:
+    # driver: bridge
+    # ipam:
+    #   config:
+    #     - subnet: 172.30.0.0/24
