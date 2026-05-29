@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -160,30 +161,12 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 	}
 	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
 
-	client := getHTTPClient(proxyURL)
+	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid)
 	var lastErr error
 	t0 := time.Now()
 	for attempt := 0; attempt < cfg.RetryAttempts; attempt++ {
-		req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
-		req.Header.Set("Origin", "https://gemini.google.com")
-		req.Header.Set("Referer", "https://gemini.google.com/app")
-		req.Header.Set("X-Same-Domain", "1")
-		req.Header.Set("X-Goog-AuthUser", "0")
-		if cookieStr != "" {
-			req.Header.Set("Cookie", cookieStr)
-		}
-		if sapisid != "" {
-			req.Header.Set("Authorization", makeSAPISIDHash(sapisid))
-		}
-
 		sendT := time.Now()
-		resp, err := client.Do(req)
+		statusCode, raw, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL)
 		if err != nil {
 			lastErr = err
 			if pickedOK {
@@ -196,14 +179,8 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 			continue
 		}
 		ttfb := time.Since(sendT).Milliseconds()
-		raw, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if resp.StatusCode != 200 {
-			lastErr = fmt.Errorf("upstream HTTP %d: %s", resp.StatusCode, truncate(string(raw), 200))
+		if statusCode != 200 {
+			lastErr = fmt.Errorf("upstream HTTP %d: %s", statusCode, truncate(string(raw), 200))
 			if pickedOK {
 				recordProxyResult(picked.ID, false, lastErr.Error())
 			}
@@ -224,6 +201,73 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 		}, nil
 	}
 	return nil, lastErr
+}
+
+// buildGeminiHeaders 准备 StreamGenerate 必需的应用层 header。
+func buildGeminiHeaders(cookieStr, sapisid string) map[string]string {
+	h := map[string]string{
+		"Accept":            "*/*",
+		"Accept-Language":   "en-US,en;q=0.9",
+		"Content-Type":      "application/x-www-form-urlencoded;charset=UTF-8",
+		"Origin":            "https://gemini.google.com",
+		"Referer":           "https://gemini.google.com/app",
+		"X-Same-Domain":     "1",
+		"X-Goog-AuthUser":   "0",
+	}
+	if cookieStr != "" {
+		h["Cookie"] = cookieStr
+	}
+	if sapisid != "" {
+		h["Authorization"] = makeSAPISIDHash(sapisid)
+	}
+	return h
+}
+
+// doGeminiRequest 发一次请求到 endpoint。proxyURL 非空走 stdlib（支持 socks5/http），
+// 空走 tls-client（chrome146 真指纹）。返回 (HTTP status, body bytes, err)。
+func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string) (int, []byte, error) {
+	if proxyURL != "" {
+		// 走 stdlib —— 跟 Kiro-Gogogo 同款 http.ProxyURL 实现，已知能过 socks5/socks5h。
+		req, err := http.NewRequest("POST", endpoint, strings.NewReader(body))
+		if err != nil {
+			return 0, nil, err
+		}
+		applyChromeHeaders(req)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		client := getStdlibClient(proxyURL)
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return resp.StatusCode, nil, err
+		}
+		return resp.StatusCode, raw, nil
+	}
+
+	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
+	req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	client := getTLSClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, raw, nil
 }
 
 // extractResponseText parses StreamGenerate's wrb.fr stream and returns the
@@ -350,53 +394,76 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	)
 
 	cookieStr, sapisid := loadCookie()
-	client := getHTTPClient(proxyURL)
+	headers := buildGeminiHeaders(cookieStr, sapisid)
 
-	req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
-	if err != nil {
-		res.Status = "network_error"
-		res.Diagnostic = "构建请求失败: " + err.Error()
-		return res
-	}
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
-	req.Header.Set("Origin", "https://gemini.google.com")
-	req.Header.Set("Referer", "https://gemini.google.com/app")
-	req.Header.Set("X-Same-Domain", "1")
-	req.Header.Set("X-Goog-AuthUser", "0")
-	if cookieStr != "" {
-		req.Header.Set("Cookie", cookieStr)
-	}
-	if sapisid != "" {
-		req.Header.Set("Authorization", makeSAPISIDHash(sapisid))
-	}
+	// 复用主流程同款 client 选择规则:有代理走 stdlib，没代理走 tls-client。
+	// 但 probe 需要看 302 的 Location header,所以这里直接发不用 doGeminiRequest。
+	var statusCode int
+	var raw []byte
+	var locHeader string
+	var err error
 
-	resp, err := client.Do(req)
-	if err != nil {
-		res.Status = "network_error"
-		res.Diagnostic = "网络层错误（DNS/TCP/TLS 失败）: " + err.Error()
-		return res
+	if proxyURL != "" {
+		req, e := http.NewRequest("POST", endpoint, strings.NewReader(body))
+		if e != nil {
+			res.Status = "network_error"
+			res.Diagnostic = "构建请求失败: " + e.Error()
+			return res
+		}
+		applyChromeHeaders(req)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		client := getStdlibClient(proxyURL)
+		resp, e := client.Do(req)
+		if e != nil {
+			res.Status = "network_error"
+			res.Diagnostic = "网络层错误（DNS/TCP/TLS 失败）: " + e.Error()
+			return res
+		}
+		defer resp.Body.Close()
+		statusCode = resp.StatusCode
+		locHeader = resp.Header.Get("Location")
+		raw, err = io.ReadAll(resp.Body)
+	} else {
+		req, e := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
+		if e != nil {
+			res.Status = "network_error"
+			res.Diagnostic = "构建请求失败: " + e.Error()
+			return res
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		client := getTLSClient()
+		resp, e := client.Do(req)
+		if e != nil {
+			res.Status = "network_error"
+			res.Diagnostic = "网络层错误（DNS/TCP/TLS 失败）: " + e.Error()
+			return res
+		}
+		defer resp.Body.Close()
+		statusCode = resp.StatusCode
+		locHeader = resp.Header.Get("Location")
+		raw, err = io.ReadAll(resp.Body)
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	res.HTTPCode = resp.StatusCode
+	_ = err
+	res.HTTPCode = statusCode
 	res.UpstreamSnip = truncate(string(raw), 300)
 
 	switch {
-	case resp.StatusCode == 302:
-		loc := resp.Header.Get("Location")
+	case statusCode == 302:
 		res.Status = "blocked_sorry"
 		res.Diagnostic = "IP 被 Google 风控（重定向到 sorry/index）。" +
-			"通常 6-24 小时解除，或换 VPN/代理 IP 立即恢复。Location: " + truncate(loc, 200)
+			"通常 6-24 小时解除，或换 VPN/代理 IP 立即恢复。Location: " + truncate(locHeader, 200)
 		return res
-	case resp.StatusCode == 429:
+	case statusCode == 429:
 		res.Status = "rate_limited"
 		res.Diagnostic = "Google 直接返回 429 限流。同样是 IP 嫌疑，但风控分支不同（朴素 SDK 路径）。"
 		return res
-	case resp.StatusCode != 200:
+	case statusCode != 200:
 		res.Status = "upstream_error"
-		res.Diagnostic = fmt.Sprintf("上游返回非 200 (HTTP %d)，可能是协议变更或临时故障。", resp.StatusCode)
+		res.Diagnostic = fmt.Sprintf("上游返回非 200 (HTTP %d)，可能是协议变更或临时故障。", statusCode)
 		return res
 	}
 

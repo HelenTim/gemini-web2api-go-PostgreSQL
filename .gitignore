@@ -21,3 +21,4 @@ tmp_*
 
 # ─── Go cache ─────────────
 vendor/
+*.exe~

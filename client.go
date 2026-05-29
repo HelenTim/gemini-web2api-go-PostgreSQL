@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -50,12 +52,12 @@ func resolveProfile(name string) profiles.ClientProfile {
 	}
 }
 
-// getHTTPClient returns a cached tls-client per (impersonate, proxy) pair.
-// Each unique proxy URL gets its own connection pool, so latency stays low.
-func getHTTPClient(proxyURL string) tls_client.HttpClient {
-	key := cfg.Impersonate + "|" + proxyURL
+// getTLSClient returns a tls-client (Chrome 146 fingerprint) for direct connections only.
+// For proxied connections we use stdlib (see getStdlibClient) — tls-client's SOCKS5
+// implementation is fragile compared to net/http.
+func getTLSClient() tls_client.HttpClient {
 	clientCacheMu.RLock()
-	if c, ok := clientCache[key]; ok {
+	if c, ok := clientCache[cfg.Impersonate]; ok {
 		clientCacheMu.RUnlock()
 		return c
 	}
@@ -63,7 +65,7 @@ func getHTTPClient(proxyURL string) tls_client.HttpClient {
 
 	clientCacheMu.Lock()
 	defer clientCacheMu.Unlock()
-	if c, ok := clientCache[key]; ok {
+	if c, ok := clientCache[cfg.Impersonate]; ok {
 		return c
 	}
 	opts := []tls_client.HttpClientOption{
@@ -71,16 +73,57 @@ func getHTTPClient(proxyURL string) tls_client.HttpClient {
 		tls_client.WithClientProfile(resolveProfile(cfg.Impersonate)),
 		tls_client.WithNotFollowRedirects(),
 	}
-	if proxyURL != "" {
-		opts = append(opts, tls_client.WithProxyUrl(proxyURL))
-	}
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[client] init failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[client] tls-client init failed: %v\n", err)
 		os.Exit(1)
 	}
-	clientCache[key] = client
+	clientCache[cfg.Impersonate] = client
 	return client
+}
+
+// ─── Stdlib HTTP client for proxied requests ─────────────────────────────────
+//
+// 走代理时改用 stdlib 而不是 tls-client，因为：
+// 1. stdlib 的 http.ProxyURL 原生支持 socks5:// / socks5h:// / http:// / https://，
+//    跟 Kiro-Gogogo 项目同款实现，已知能过我们手头的代理。
+// 2. tls-client 自带的 SOCKS 实现在某些代理端会 EOF（已实测）。
+// 3. 走代理时 Google 看到的"客户端指纹"实际是代理出口节点的 TLS 握手,
+//    我们这边伪不伪装意义不大;但应用层 header 还是按 Chrome 146 模拟。
+//
+// 不走代理时仍然用 getTLSClient（保留 utls/chrome146 真指纹优势）。
+
+var (
+	stdlibClientCache sync.Map // proxyURL -> *http.Client
+)
+
+// getStdlibClient returns an http.Client routed through proxyURL.
+// proxyURL must not be empty (caller checks).
+func getStdlibClient(proxyURL string) *http.Client {
+	if cached, ok := stdlibClientCache.Load(proxyURL); ok {
+		return cached.(*http.Client)
+	}
+	t := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		DisableCompression:  false,
+		// 走代理时不强求 HTTP/2，部分代理不支持。
+		ForceAttemptHTTP2: false,
+	}
+	if u, err := url.Parse(proxyURL); err == nil {
+		t.Proxy = http.ProxyURL(u)
+	}
+	c := &http.Client{
+		Timeout:   time.Duration(cfg.RequestTimeout) * time.Second,
+		Transport: t,
+		// 跟 tls-client 一致：不自动跟随重定向（302 是诊断信号）
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	stdlibClientCache.Store(proxyURL, c)
+	return c
 }
 
 // loadCookie reads the cookie file (Netscape one-line format or JSON).
@@ -119,4 +162,19 @@ func makeSAPISIDHash(sapisid string) string {
 	ts := time.Now().Unix()
 	h := sha1.Sum([]byte(fmt.Sprintf("%d %s https://gemini.google.com", ts, sapisid)))
 	return fmt.Sprintf("SAPISIDHASH %d_%s", ts, hex.EncodeToString(h[:]))
+}
+
+// ChromeUA 是给 stdlib 走代理时用的 Chrome 146 真实 UA 模板。
+const ChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+
+// applyChromeHeaders 给 stdlib 请求填上模拟 Chrome 146 的应用层 header。
+// utls 那层做 TLS/HTTP2 指纹我们做不到（走代理），但 header 一定要齐。
+func applyChromeHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", ChromeUA)
+	req.Header.Set("Sec-CH-UA", `"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="24"`)
+	req.Header.Set("Sec-CH-UA-Mobile", "?0")
+	req.Header.Set("Sec-CH-UA-Platform", `"Windows"`)
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 }

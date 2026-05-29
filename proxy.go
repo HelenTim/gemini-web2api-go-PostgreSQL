@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -101,6 +102,9 @@ func proxyCreate(name, url string, weight int) (int64, error) {
 	if name == "" || url == "" {
 		return 0, errors.New("name and url required")
 	}
+	if err := validateProxyURL(url); err != nil {
+		return 0, err
+	}
 	if weight <= 0 {
 		weight = 1
 	}
@@ -112,6 +116,18 @@ func proxyCreate(name, url string, weight int) (int64, error) {
 	id, _ := res.LastInsertId()
 	loadProxies()
 	return id, nil
+}
+
+// validateProxyURL 校验代理 URL 协议（参考 Kiro-Gogogo 实现）。
+// 支持 http / https / socks5 / socks5h。
+func validateProxyURL(s string) error {
+	if !strings.HasPrefix(s, "http://") &&
+		!strings.HasPrefix(s, "https://") &&
+		!strings.HasPrefix(s, "socks5://") &&
+		!strings.HasPrefix(s, "socks5h://") {
+		return errors.New("代理 URL 必须以 http:// / https:// / socks5:// / socks5h:// 开头")
+	}
+	return nil
 }
 
 func proxyUpdate(id int64, name, url string, enabled *bool, weight *int) error {
