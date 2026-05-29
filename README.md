@@ -1,37 +1,128 @@
 # gemini-web2api-go
 
-Gemini 网页协议反代成 OpenAI 兼容 API（Go 重写版）。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/go-1.21%2B-00ADD8.svg)](https://golang.org)
+[![Docker](https://img.shields.io/badge/docker-distroless-blue)](Dockerfile)
 
-- **Chrome 146 真指纹**（`tls-client` v1.14，TLS/HTTP2 fingerprint 跟 chat2api 同等级）
-- **API Key 鉴权**（首次启动自动生成 `sk-gemini-*`，可在 admin 面板里改）
-- **SQLite 持久化**（30 天请求明细 + 永久小时/天聚合）
-- **管理面板**（中文 UI，单 HTML embed 进二进制；仪表盘 + 请求记录 + 代理池 + 设置）
-- **代理池**（运行时增删改 + 失败 5 次自动熔断 + 轮询调度）
-- **Docker 部署**（multi-stage → distroless，最小镜像；同 Pante docker network）
-- **隐私**：只存元数据（模型/代理/延迟/token 数/状态），prompt 和 response 内容**永不入库**
-- **Token 计算**：tiktoken cl100k_base BPE，中英文都比 chars/4 准；Gemini 自己不返回 token 数（实测）
+中文 | [English](README_EN.md)
 
-## 快速跑
+把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑，挂 Google cookie 可解锁 Pro），**Chrome 146 真指纹**，**SQLite 持久化**，自带**中文管理面板**。
+
+> 重写自 [gemini-web2api](https://github.com/zhongruichen/gemini-web2api)（Python 单文件版），协议层逐字段对齐验证。
+
+---
+
+## 这是什么
+
+把这种调用：
+```
+[OpenAI SDK / Cherry Studio / Cursor / dify / newapi / ...]
+    ↓ http://localhost:8083/v1/chat/completions
+[gemini-web2api-go]
+    ↓ 逆向 gemini.google.com 网页协议
+[Google Gemini 网页端]
+```
+
+不是 Google 官方 API（[generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)）的二次封装——**直接反代浏览器协议**，所以**不需要 Google API Key、不需要付费配额**。
+
+## 跟 Python 版的区别
+
+| 维度 | [Python 单文件版](https://github.com/zhongruichen/gemini-web2api) | gemini-web2api-go |
+|---|---|---|
+| 部署 | `python gemini_web2api.py` | 单二进制（~25MB Docker 镜像） |
+| 依赖 | stdlib only | 编译产物零外部依赖 |
+| 指纹 | urllib 默认（Google 视作 SDK） | **utls Chrome 146**（视作浏览器） |
+| API 鉴权 | ❌ 裸奔 | ✅ Bearer token / x-api-key |
+| 持久化 | ❌ 无 | ✅ SQLite，30 天明细 + 永久聚合 |
+| 管理面板 | ❌ | ✅ 中文 Web UI（仪表盘 / 请求记录 / 代理池 / 设置） |
+| 限流保护 | ❌ | ✅ 每 IP slot 独立并发/RPM/RPH 限额 |
+| 代理池 | 单一静态代理 | ✅ 运行时增删改 + 失败熔断 + 轮询调度 |
+| 隐私 | n/a | ✅ Prompt/Response 内容**永不入库**，只存元数据 |
+
+## 快速开始
+
+### 编译
 
 ```bash
-# 本地编译
-go build -o gemini-web2api-go.exe .
-./gemini-web2api-go.exe --port 8083 --admin-token your-admin-token
+go build -o gemini-web2api-go .
+./gemini-web2api-go --port 8083 --admin-token your-admin-token
+```
 
-# Docker
+### Docker
+
+```bash
 docker compose up -d --build
 ```
 
-启动后：
-- OpenAI API: `http://localhost:8083/v1/chat/completions`
-- 管理面板: `http://localhost:8083/admin`
-- 默认 8083 端口
+启动后会看到 banner：
 
-首次启动会在 banner 里看到自动生成的 API Key（`sk-gemini-*`），调用时 `Authorization: Bearer <key>` 或 `x-api-key: <key>` 二选一。
+```
+gemini-web2api-go v3.0.0
+  Listening:   http://0.0.0.0:8083
+  Base URL:    http://localhost:8083/v1
+  API key:     sk-gemini-XX...XXXX  (mutable in admin UI)
+  Admin UI:    http://localhost:8083/admin  (token auth)
+  Impersonate: chrome_146
+  Tokenizer:   tiktoken cl100k_base
+  Per-IP 限流: 并发=5 / RPM=30 / RPH=80
+```
+
+### 调用
+
+```bash
+curl http://localhost:8083/v1/chat/completions \
+  -H "Authorization: Bearer sk-gemini-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.5-flash",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+OpenAI Python SDK 也直接能用：
+
+```python
+from openai import OpenAI
+client = OpenAI(
+    base_url="http://localhost:8083/v1",
+    api_key="sk-gemini-..."  # admin 面板里看
+)
+resp = client.chat.completions.create(
+    model="gemini-3.5-flash-thinking",
+    messages=[{"role": "user", "content": "解释量子纠缠"}]
+)
+print(resp.choices[0].message.content)
+```
+
+## 管理面板
+
+`http://localhost:8083/admin`，用 `--admin-token` 登录。
+
+- **仪表盘** — 24h KPI + 请求量/P50 延迟双轴趋势图 + 模型/代理分组统计 + IP 限流用量 + 一键连通性诊断
+- **请求记录** — 明细列表（仅元数据，无 prompt/response 内容），状态/模型筛选 + 分页
+- **代理池** — 运行时增删改 + 启用/禁用 + 失败次数熔断（每代理是独立 IP slot）
+- **设置** — API Key 显示/复制/旋转/自定义 + 限流配置查看
+
+## 模型
+
+| 模型 | 描述 | 输出长度 |
+|---|---|---|
+| `gemini-3.5-flash` | 快速通用 | ~12k 字符 |
+| `gemini-3.5-flash-thinking` | 深度思考，最长输出 | **~20k 字符** |
+| `gemini-3.5-flash-thinking-lite` | 自适应思考深度 | ~15k 字符 |
+| `gemini-3.1-pro` | Pro 模型（需 cookie 才走真 Pro 路由）| ~12k 字符 |
+| `gemini-auto` | 自动选模型 | varies |
+| `gemini-flash-lite` | 轻量极速 | ~10k 字符 |
+
+模型名后加 `@think=N` 可覆盖思考深度（`0` 最深 ↔ `4` 最浅）：
+
+```
+gemini-3.5-flash-thinking@think=2
+```
 
 ## 配置
 
-`config.json`（可选，CLI flag 优先级更高）：
+`config.json`（可选，CLI flag 优先）：
 
 ```json
 {
@@ -44,64 +135,112 @@ docker compose up -d --build
   "admin_token": "",
   "request_timeout_sec": 180,
   "retry_attempts": 3,
-  "default_model": "gemini-3.5-flash"
+  "default_model": "gemini-3.5-flash",
+  "per_ip_concurrent": 5,
+  "per_ip_rpm": 30,
+  "per_ip_rph": 80
 }
 ```
 
-支持的 impersonate：`chrome_146` (默认) / `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0`
+支持的 impersonate：`chrome_146`（默认）/ `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0`
 
 环境变量：
 - `ADMIN_TOKEN` — 管理面板登录 token
-- `API_KEY` — 锁定 API key（设了之后 admin UI 不能改，必须重启换值）
+- `API_KEY` — 锁定 `/v1/*` API key（不会显示在 admin UI 的"自定义"按钮里）
 
-## 模型
+## Pro 模型 (可选)
 
-| 模型 | 描述 |
-|---|---|
-| `gemini-3.5-flash` | 快速通用 |
-| `gemini-3.5-flash-thinking` | 深度思考，输出最长 ~20k 字符 |
-| `gemini-3.5-flash-thinking-lite` | 自适应思考深度 |
-| `gemini-3.1-pro` | Pro 模型（要 cookie 才路由真 Pro） |
-| `gemini-auto` | 自动选模型 |
-| `gemini-flash-lite` | 轻量快速 |
+匿名可调所有模型，但 `gemini-3.1-pro` 不挂 cookie 会被路由回 Flash。挂一个 free Google 账号 cookie 即可走真 Pro 路由（不需要付费订阅）：
 
-模型名后加 `@think=N` 覆盖思考深度（0=最深，4=最浅）：
+1. 浏览器登录 [gemini.google.com](https://gemini.google.com)
+2. DevTools (F12) → Application → Cookies → `https://gemini.google.com`
+3. 复制：`SID` / `HSID` / `SSID` / `APISID` / `SAPISID` / `__Secure-1PSID`
+4. `cookie.txt`：
 ```
-gemini-3.5-flash-thinking@think=2
+SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 ```
+5. 启动加 `--cookie-file cookie.txt`
 
-## 文件
+## 代理池（白嫖路线核心）
+
+**为什么需要**：实测单 IP 累积 **~100 次** Gemini 网页请求就会被重定向到 `google.com/sorry/index`，所有后续请求 **6-24 小时**内全部失败。
+
+**怎么解决**：在管理面板「代理池」页面加多个代理，**每个代理是一个独立的 IP slot**，享有独立的并发/RPM/RPH 配额。N 个代理 = N 倍总容量。
+
+支持的代理协议：
+- `http://user:pass@host:port`
+- `https://user:pass@host:port`
+- `socks5://user:pass@host:port`
+- `socks5h://user:pass@host:port`（远程 DNS 解析，绕开本地 DNS 污染）
+
+**自动调度规则**：
+- 配了代理后，**不会再退回直连**（避免代理满了把主机 IP 也打爆）
+- 失败 5 次自动熔断（管理面板可手动重置）
+- 全部代理满 → 返回 HTTP 429（不消耗 Google 配额，等空位再重试）
+
+## 指纹模拟
+
+直连场景（无代理）走 [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client)，TLS 握手 + HTTP/2 SETTINGS 帧 + ALPS 全部对齐真实 Chrome 146。Google 风控视角下，跟真浏览器无法区分。
+
+走代理场景换用 stdlib `net/http` + `http.ProxyURL`（兼容性最佳），但应用层 header（`Sec-CH-UA` / `Sec-Fetch-*` / `User-Agent`）仍按 Chrome 146 真实值伪装。
+
+**实测意外**：朴素 SDK 调用（如 Python urllib）触发风控时拿到 **HTTP 429**；伪装成 Chrome 后触发风控拿到 **HTTP 302** 跳转到 `google.com/sorry/index`（CAPTCHA 验证页）。两者本质都是 IP 黑名单，但 302 证明 Google 真的把我们认成了浏览器。
+
+## 隐私
+
+- **Prompt 和 response 内容永不入库**——只存元数据：模型、代理 ID、延迟、token 数、状态码、错误类型
+- 历史 `prompt_preview` / `response_preview` 列从老版本迁移时自动 DROP
+- Token 数用 [tiktoken-go](https://github.com/pkoukk/tiktoken-go) cl100k_base BPE 分词器精确计算（中英文都准），不是 `len/4` 估算
+- Gemini 网页端不返回真 token 数（实测响应里没有任何 token/usage 字段，只能本地估算）
+
+## OpenAI 协议覆盖
+
+| 路径 | 状态 | 备注 |
+|---|---|---|
+| `POST /v1/chat/completions` | ✅ | 含 `stream: true` SSE |
+| `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用） |
+| `GET /v1/models` | ✅ | 列出 6 个模型 |
+| Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。模型偶尔不按格式返回 |
+| Vision / 图片输入 | ❌ | 网页协议不支持文件上传 |
+| Audio | ❌ | 网页协议不支持 |
+
+## 项目结构
 
 ```
 main.go              入口 + flag 解析 + 路由注册
-config.go            配置 + JSON 加载
-client.go            tls-client 缓存（per-proxy 实例）+ cookie + SAPISIDHASH
-gemini.go            80 槽位 payload + StreamGenerate + wrb.fr 解析
+config.go            配置加载 + DEFAULT_CONFIG
+client.go            tls-client (chrome146) + stdlib (代理) 双 client
+gemini.go            80 槽位 payload + StreamGenerate + wrb.fr 流解析
 messages.go          OpenAI messages → prompt + tool_call 解析
-server.go            /v1/models + /v1/chat/completions + /v1/responses + metrics 写入
+server.go            /v1/* + 限流入口 + metrics 写入
+ratelimit.go         每 IP slot 独立并发/RPM/RPH 限流器
 tokenizer.go         tiktoken cl100k_base 单例
-apikey.go            /v1/* API key 鉴权（locked / runtime-mutable 双轨）
+apikey.go            API key 管理（locked / runtime-mutable 双轨）
 db.go                SQLite schema + sessions + requests + kv
-proxy.go             代理池 CRUD + 轮询选择 + 熔断
-scheduler.go         小时/天聚合 + 数据保留 + 代理池热加载
-admin.go             /admin/api/* 鉴权 + stats/timeseries/requests/proxies/apikey
+proxy.go             代理池 CRUD + 容量调度 + 熔断
+scheduler.go         小时/天聚合 + 数据保留
+admin.go             /admin/api/* 鉴权 + REST 接口
 admin_ui.go          embed admin_ui/ 静态文件
-admin_ui/index.html  单页应用（中文 UI + Chart.js CDN）
-Dockerfile           multi-stage build (alpine → distroless)
-docker-compose.yml   接 Pante network，sqlite volume 持久化
+admin_ui/index.html  单页中文 admin（Chart.js CDN）
+Dockerfile           multi-stage (alpine builder → distroless runtime)
+docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
 ```
-
-## 接进 Pante 体系
-
-跟 cliproxy/chat2api 一样接进 newapi 当上游渠道：
-
-- newapi 配渠道 base_url=`http://gemini-web2api:8083`，API key 填 admin 面板里那个 `sk-gemini-*`
-- docker-compose 默认 `expose:` 不 `ports:` —— 不暴露公网，只让同 `pante` network 的容器访问
-- 想本地调试取消 `ports: "127.0.0.1:8083:8083"` 注释
 
 ## 限制
 
-- 匿名访问被 Google 按 IP 限流（几 RPS 量级）→ 配多代理池放大产能
-- Pro 模型路由要 `--cookie-file cookie.txt`（free Google 账号即可，不要订阅）
-- Tool calling 是 prompt 级实现（让模型输出 ```` ```tool_call``` ```` 块再 regex 解析），不是真协议层，模型偶尔不按格式返回
+- **匿名访问**：单 IP 受 Google 限流，约 100 次/几小时被拦 6-24 小时 → 配代理池放大产能
+- **Pro 路由**：要 free Google 账号 cookie，不需要付费订阅
+- **Function calling**：prompt 级实现，模型不一定每次都按格式返回（OpenAI 真协议层我们做不到）
+- **多模态**：暂不支持（网页协议本身限制）
+- **token 数**：用 tiktoken 估算（Gemini 真 tokenizer 未公开），跟真值偏差 ±20% 以内
 
+## 致谢
+
+- [gemini-web2api](https://github.com/zhongruichen/gemini-web2api) — Python 单文件版，本项目协议层的参考实现
+- [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — Chrome 真指纹 TLS 库
+- [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
+- [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — 纯 Go SQLite（CGO-free，alpine 直接编）
+
+## License
+
+MIT — 详见 [LICENSE](LICENSE)
