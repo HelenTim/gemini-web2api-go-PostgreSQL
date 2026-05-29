@@ -455,7 +455,6 @@ func handleAdminProxyItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // /admin/api/usage — 返回每个 IP slot 的当前限流用量。
-// id=0 表示直连;id>0 表示对应代理。
 func handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	usage := allSlotUsage()
 	// 加上代理名字以便 UI 显示
@@ -532,4 +531,77 @@ func handleAdminAPIKey(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// /admin/api/test — 端到端连通性诊断。
+//
+// 走完整协议路径（chrome146 指纹 + 真 StreamGenerate）但：
+//   - 不消耗限流 slot（admin 诊断不算业务流量）
+//   - 不写入 requests 表（不污染业务统计）
+//   - 返回详细原因码 + 延迟 + 上游响应片段
+//
+// 可选参数 ?proxy_id=N 测某个代理（id=0 测直连 / 留空 = 自动按调度规则挑一个）。
+func handleAdminTest(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	proxyIDStr := q.Get("proxy_id")
+	prompt := q.Get("prompt")
+	if prompt == "" {
+		prompt = "Reply with one short word."
+	}
+
+	var proxyURL, proxyName string
+	var proxyID int64
+	useDirect := false
+	if proxyIDStr == "" {
+		// 自动模式：仿照 acquireSlot 优先代理池里第一个 enabled
+		for _, p := range listProxies() {
+			if p.Enabled && p.FailCount < 5 {
+				proxyURL = p.URL
+				proxyName = p.Name
+				proxyID = p.ID
+				break
+			}
+		}
+		if proxyURL == "" {
+			useDirect = true
+			proxyName = "直连"
+		}
+	} else {
+		var err error
+		proxyID, err = strconv.ParseInt(proxyIDStr, 10, 64)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "bad proxy_id"})
+			return
+		}
+		if proxyID == 0 {
+			useDirect = true
+			proxyName = "直连"
+		} else {
+			found := false
+			for _, p := range listProxies() {
+				if p.ID == proxyID {
+					proxyURL = p.URL
+					proxyName = p.Name
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeJSON(w, 404, map[string]string{"error": "proxy not found"})
+				return
+			}
+		}
+	}
+	if useDirect {
+		proxyURL = ""
+	}
+
+	t0 := time.Now()
+	res := probeGemini(prompt, proxyURL)
+	res.TotalMs = time.Since(t0).Milliseconds()
+	res.ProxyID = proxyID
+	res.ProxyName = proxyName
+	res.UseDirect = useDirect
+
+	writeJSON(w, 200, res)
 }

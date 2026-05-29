@@ -296,3 +296,120 @@ func truncate(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// ProbeResult 是 admin 测试接口返回的连通性诊断结果。
+type ProbeResult struct {
+	OK            bool   `json:"ok"`
+	Status        string `json:"status"`         // "success" / "blocked_sorry" / "rate_limited" / "upstream_error" / "network_error"
+	HTTPCode      int    `json:"http_code"`
+	TotalMs       int64  `json:"total_ms"`
+	ProxyID       int64  `json:"proxy_id"`
+	ProxyName     string `json:"proxy_name"`
+	UseDirect     bool   `json:"use_direct"`
+	ResponseText  string `json:"response_text"`  // 截断到 200 字符
+	UpstreamSnip  string `json:"upstream_snip"`  // 上游原始响应前 300 字符
+	Diagnostic    string `json:"diagnostic"`     // 中文诊断说明
+	Impersonate   string `json:"impersonate"`
+}
+
+// probeGemini 直接调 Gemini StreamGenerate（绕过限流），返回详细诊断。
+// 不写 db、不消耗限流 slot。
+func probeGemini(prompt, proxyURL string) ProbeResult {
+	res := ProbeResult{Impersonate: cfg.Impersonate}
+
+	inner := make([]interface{}, 80)
+	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
+	inner[1] = []interface{}{"en"}
+	inner[2] = []interface{}{"", "", "", nil, nil, nil, nil, nil, nil, ""}
+	inner[6] = []interface{}{0}
+	inner[7] = 1
+	inner[10] = 1
+	inner[11] = 0
+	inner[17] = []interface{}{[]interface{}{4}}
+	inner[18] = 0
+	inner[27] = 1
+	inner[30] = []interface{}{4}
+	inner[41] = []interface{}{2}
+	inner[53] = 0
+	inner[59] = uuid.NewString()
+	inner[61] = []interface{}{}
+	inner[68] = 1
+	inner[79] = 1 // FAST 模式（mode=1 = gemini-3.5-flash）
+
+	innerJSON, _ := json.Marshal(inner)
+	outer := []interface{}{nil, string(innerJSON)}
+	outerJSON, _ := json.Marshal(outer)
+	form := url.Values{}
+	form.Set("f.req", string(outerJSON))
+	body := form.Encode()
+
+	reqid := time.Now().Unix() % 1000000
+	endpoint := fmt.Sprintf(
+		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
+		cfg.GeminiBL, reqid,
+	)
+
+	cookieStr, sapisid := loadCookie()
+	client := getHTTPClient(proxyURL)
+
+	req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
+	if err != nil {
+		res.Status = "network_error"
+		res.Diagnostic = "构建请求失败: " + err.Error()
+		return res
+	}
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+	req.Header.Set("Origin", "https://gemini.google.com")
+	req.Header.Set("Referer", "https://gemini.google.com/app")
+	req.Header.Set("X-Same-Domain", "1")
+	req.Header.Set("X-Goog-AuthUser", "0")
+	if cookieStr != "" {
+		req.Header.Set("Cookie", cookieStr)
+	}
+	if sapisid != "" {
+		req.Header.Set("Authorization", makeSAPISIDHash(sapisid))
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		res.Status = "network_error"
+		res.Diagnostic = "网络层错误（DNS/TCP/TLS 失败）: " + err.Error()
+		return res
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	res.HTTPCode = resp.StatusCode
+	res.UpstreamSnip = truncate(string(raw), 300)
+
+	switch {
+	case resp.StatusCode == 302:
+		loc := resp.Header.Get("Location")
+		res.Status = "blocked_sorry"
+		res.Diagnostic = "IP 被 Google 风控（重定向到 sorry/index）。" +
+			"通常 6-24 小时解除，或换 VPN/代理 IP 立即恢复。Location: " + truncate(loc, 200)
+		return res
+	case resp.StatusCode == 429:
+		res.Status = "rate_limited"
+		res.Diagnostic = "Google 直接返回 429 限流。同样是 IP 嫌疑，但风控分支不同（朴素 SDK 路径）。"
+		return res
+	case resp.StatusCode != 200:
+		res.Status = "upstream_error"
+		res.Diagnostic = fmt.Sprintf("上游返回非 200 (HTTP %d)，可能是协议变更或临时故障。", resp.StatusCode)
+		return res
+	}
+
+	text := extractResponseText(string(raw))
+	if text == "" {
+		res.Status = "upstream_error"
+		res.Diagnostic = "上游 200 但解析不到回复文本，可能 wrb.fr 帧格式变了或被空响应。"
+		return res
+	}
+
+	res.OK = true
+	res.Status = "success"
+	res.ResponseText = truncate(text, 200)
+	res.Diagnostic = "调用成功。延迟 / 内容见上面字段。"
+	return res
+}

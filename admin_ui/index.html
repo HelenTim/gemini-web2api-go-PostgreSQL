@@ -124,6 +124,20 @@ const pages = {
         <canvas id="chartReq"></canvas>
       </div>
       <div class="panel">
+        <h2>连通性诊断
+          <span class="controls">
+            <select id="testProxy"><option value="">自动选择（按调度规则）</option><option value="0">直连主机 IP</option></select>
+            <button class="btn" onclick="runTest()">测试一次</button>
+          </span>
+        </h2>
+        <p style="color: var(--muted); font-size: 12.5px; margin-bottom: 10px; line-height: 1.6;">
+          打一次真实 Gemini 请求看是否通。<b>不消耗限流配额、不写入请求记录</b>，
+          专门用来排查 IP 是不是被 Google 风控了。返回 302/429 都是 IP 黑名单
+          信号 → 该换 IP 或加代理。
+        </p>
+        <div id="testResult" style="display:none;"></div>
+      </div>
+      <div class="panel">
         <h2>IP 限流用量
           <span class="controls"><button onclick="switchPage('dashboard')">刷新</button></span>
         </h2>
@@ -424,6 +438,58 @@ async function doLogout() {
   renderLogin();
 }
 
+// 连通性诊断 ──────────────────────────────────────────────────────────────
+
+async function populateTestProxies() {
+  const sel = document.getElementById('testProxy');
+  if (!sel) return;
+  // 清掉旧的代理选项（保留前两个固定项）
+  while (sel.options.length > 2) sel.remove(2);
+  try {
+    const data = await api('/admin/api/proxies');
+    (data.items || []).filter(p => p.enabled).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.text = '代理: ' + p.name;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* ignore — login redirect handled in api() */ }
+}
+
+async function runTest() {
+  const sel = document.getElementById('testProxy');
+  const proxy = sel.value;
+  const box = document.getElementById('testResult');
+  box.style.display = 'block';
+  box.innerHTML = '<div class="empty">正在测试…（最多等 30 秒）</div>';
+  try {
+    const url = '/admin/api/test' + (proxy !== '' ? '?proxy_id=' + proxy : '');
+    const r = await api(url);
+    const statusBadge = {
+      success: '<span class="badge ok">成功</span>',
+      blocked_sorry: '<span class="badge fail">被风控（302）</span>',
+      rate_limited: '<span class="badge fail">被限流（429）</span>',
+      upstream_error: '<span class="badge fail">上游错误</span>',
+      network_error: '<span class="badge fail">网络层错误</span>',
+    }[r.status] || `<span class="badge muted">${r.status}</span>`;
+    box.innerHTML = `
+      <div style="display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; font-size: 13px;">
+        <div style="color: var(--muted)">结果</div><div>${statusBadge}</div>
+        <div style="color: var(--muted)">HTTP code</div><div><code>${r.http_code || '-'}</code></div>
+        <div style="color: var(--muted)">总用时</div><div><code>${r.total_ms} ms</code></div>
+        <div style="color: var(--muted)">使用的 IP slot</div><div>${r.proxy_name || '-'}${r.use_direct ? '' : (r.proxy_id ? ' (代理 #' + r.proxy_id + ')' : '')}</div>
+        <div style="color: var(--muted)">指纹</div><div><code>${r.impersonate}</code></div>
+        ${r.response_text ? `<div style="color: var(--muted)">回复内容</div><div class="pre">${escapeHtml(r.response_text)}</div>` : ''}
+        <div style="color: var(--muted)">诊断说明</div><div style="line-height: 1.6;">${escapeHtml(r.diagnostic)}</div>
+        ${r.upstream_snip && !r.ok ? `<div style="color: var(--muted)">上游响应片段</div>
+          <div class="pre" style="max-height: 120px; overflow: auto; background: var(--bg); padding: 8px; border-radius: 4px;">${escapeHtml(r.upstream_snip)}</div>` : ''}
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div class="err">测试请求失败：${e.message}</div>`;
+  }
+}
+
 // API key actions ──────────────────────────────────────────────────────────
 
 function toggleKeyVis() {
@@ -490,6 +556,7 @@ async function switchPage(name) {
   if (name === 'dashboard') {
     await loadChart('24h');
     document.getElementById('rangeSel').onchange = (e) => loadChart(e.target.value);
+    await populateTestProxies();
   }
   if (name === 'requests') {
     reqOffset = 0;

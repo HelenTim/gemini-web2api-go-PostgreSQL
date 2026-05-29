@@ -130,6 +130,7 @@ func main() {
 		mux.HandleFunc("/admin/api/proxies/", requireAuth(handleAdminProxyItem))
 		mux.HandleFunc("/admin/api/apikey", requireAuth(handleAdminAPIKey))
 		mux.HandleFunc("/admin/api/usage", requireAuth(handleAdminUsage))
+		mux.HandleFunc("/admin/api/test", requireAuth(handleAdminTest))
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
