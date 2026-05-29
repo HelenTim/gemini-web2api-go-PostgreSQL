@@ -50,9 +50,12 @@ func loadProxies() {
 	proxyMu.Unlock()
 }
 
-// pickProxy returns the next enabled proxy via round-robin. (id=0 if none).
-// The rotation skips proxies with fail_count >= 5 (circuit breaker).
-func pickProxy() (Proxy, bool) {
+// pickProxyWithCapacity 找一个 enabled + fail<5 + 当前限流没满的代理。
+// 返回 (proxy, ok)。所有代理都满时返回 ok=false。
+//
+// 跟旧的 pickProxy 区别：会问 trySlotAcquire 看 slot 是否有容量；
+// 调用方拿到的 slot 必须配套调 slotRelease(proxy.ID)。
+func pickProxyWithCapacity() (Proxy, bool) {
 	proxyMu.RLock()
 	defer proxyMu.RUnlock()
 	if len(proxyCache) == 0 {
@@ -67,8 +70,15 @@ func pickProxy() (Proxy, bool) {
 	if len(pool) == 0 {
 		return Proxy{}, false
 	}
-	idx := atomic.AddUint64(&proxyCursor, 1) - 1
-	return pool[int(idx)%len(pool)], true
+	// 从轮询起点开始,找第一个 slot 没满的
+	start := atomic.AddUint64(&proxyCursor, 1) - 1
+	for i := 0; i < len(pool); i++ {
+		p := pool[(int(start)+i)%len(pool)]
+		if ok, _ := trySlotAcquire(p.ID); ok {
+			return p, true
+		}
+	}
+	return Proxy{}, false
 }
 
 func recordProxyResult(id int64, success bool, errStr string) {

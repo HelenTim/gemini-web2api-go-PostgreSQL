@@ -101,6 +101,7 @@ const destroyChart = (key) => { if (charts[key]) { charts[key].destroy(); delete
 const pages = {
   dashboard: async () => {
     const stats = await api('/admin/api/stats?hours=24');
+    const usage = await api('/admin/api/usage');
     return `
       <div class="kpi-row">
         <div class="kpi"><div class="label">24 小时请求数</div><div class="value">${fmt.num(stats.total_requests)}</div></div>
@@ -121,6 +122,33 @@ const pages = {
           </span>
         </h2>
         <canvas id="chartReq"></canvas>
+      </div>
+      <div class="panel">
+        <h2>IP 限流用量
+          <span class="controls"><button onclick="switchPage('dashboard')">刷新</button></span>
+        </h2>
+        <p style="color: var(--muted); font-size: 12px; margin-bottom: 10px;">
+          每个 IP slot（直连或单个代理）独立计数。当前限额：并发 ${(usage.items[0]||{}).limit_concurrent || '-'} / RPM ${(usage.items[0]||{}).limit_rpm || '-'} / RPH ${(usage.items[0]||{}).limit_rph || '-'}
+        </p>
+        <table>
+          <thead><tr><th>IP slot</th><th>并发</th><th>RPM</th><th>RPH</th><th>占用率（最严的那项）</th></tr></thead>
+          <tbody>${(usage.items || []).map(u => {
+            const cc = u.limit_concurrent ? u.inflight / u.limit_concurrent : 0;
+            const cm = u.limit_rpm ? u.rpm / u.limit_rpm : 0;
+            const ch = u.limit_rph ? u.rph / u.limit_rph : 0;
+            const top = Math.max(cc, cm, ch);
+            const cls = top >= 0.9 ? 'fail' : top >= 0.6 ? 'muted' : 'ok';
+            const label = top >= 0.9 ? '接近上限' : top >= 0.6 ? '使用中' : '空闲';
+            return `<tr>
+              <td><b>${u.name}</b></td>
+              <td>${u.inflight} / ${u.limit_concurrent || '∞'}</td>
+              <td>${u.rpm} / ${u.limit_rpm || '∞'}</td>
+              <td>${u.rph} / ${u.limit_rph || '∞'}</td>
+              <td><span class="badge ${cls}">${(top*100).toFixed(0)}% · ${label}</span></td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="5" class="empty">还没有任何请求经过</td></tr>'}
+          </tbody>
+        </table>
       </div>
       <div class="grid-2">
         <div class="panel">

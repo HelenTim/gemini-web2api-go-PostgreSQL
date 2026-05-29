@@ -141,6 +141,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	text, toolCalls, res, err := callGemini(prompt, modelID, thinkMode, tools)
 	if err != nil {
 		recordRequest("chat.completions", modelName, prompt, "", nil, 502, err.Error(), false)
+		if rle, ok := err.(*RateLimitError); ok {
+			writeJSON(w, 429, map[string]interface{}{"error": map[string]string{
+				"message": rle.Error(),
+				"type":    "rate_limit_exceeded",
+				"code":    "ip_slot_full",
+			}})
+			return
+		}
 		writeJSON(w, 502, map[string]interface{}{"error": map[string]string{"message": "upstream error: " + err.Error()}})
 		return
 	}
@@ -331,6 +339,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	text, toolCalls, res, err := callGemini(prompt, modelID, thinkMode, tools)
 	if err != nil {
 		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), false)
+		if rle, ok := err.(*RateLimitError); ok {
+			writeJSON(w, 429, map[string]interface{}{"error": map[string]string{
+				"message": rle.Error(),
+				"type":    "rate_limit_exceeded",
+				"code":    "ip_slot_full",
+			}})
+			return
+		}
 		writeJSON(w, 502, map[string]interface{}{"error": map[string]string{"message": "upstream error: " + err.Error()}})
 		return
 	}

@@ -454,6 +454,39 @@ func handleAdminProxyItem(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// /admin/api/usage — 返回每个 IP slot 的当前限流用量。
+// id=0 表示直连;id>0 表示对应代理。
+func handleAdminUsage(w http.ResponseWriter, r *http.Request) {
+	usage := allSlotUsage()
+	// 加上代理名字以便 UI 显示
+	proxyNames := map[int64]string{}
+	for _, p := range listProxies() {
+		proxyNames[p.ID] = p.Name
+	}
+	out := make([]map[string]interface{}, 0, len(usage))
+	for _, u := range usage {
+		name := "直连"
+		if u.ProxyID > 0 {
+			if n, ok := proxyNames[u.ProxyID]; ok {
+				name = n
+			} else {
+				name = "(已删除)"
+			}
+		}
+		out = append(out, map[string]interface{}{
+			"proxy_id":         u.ProxyID,
+			"name":             name,
+			"inflight":         u.Inflight,
+			"rpm":              u.RPM,
+			"rph":              u.RPH,
+			"limit_concurrent": u.LimitConc,
+			"limit_rpm":        u.LimitRPM,
+			"limit_rph":        u.LimitRPH,
+		})
+	}
+	writeJSON(w, 200, map[string]interface{}{"items": out})
+}
+
 func atoiDefault(s string, d int) int {
 	if s == "" {
 		return d

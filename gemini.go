@@ -56,6 +56,52 @@ type StreamResult struct {
 	TotalMs   int64
 }
 
+// RateLimitError 表示所有 IP slot 都达到了限流上限。
+// HTTP handler 看到这个错时返回 429 给客户端。
+type RateLimitError struct {
+	Reason   string // "concurrent" / "rpm" / "rph"
+	ProxyID  int64  // 0 = 直连 slot 满
+}
+
+func (e *RateLimitError) Error() string {
+	if e.ProxyID == 0 {
+		return "direct IP slot full: " + e.Reason + " limit reached (configure proxies to scale)"
+	}
+	return "all proxy slots full: " + e.Reason + " limit reached"
+}
+
+// acquireSlot 选一个有容量的 slot 给本次请求用。
+// 优先级：代理池里有容量的代理 → 直连。
+// 全满返回 *RateLimitError。
+//
+// 调用方拿到 (proxy, ok=true) 必须配 deferred releaseSlot()。
+func acquireSlot() (Proxy, bool, error) {
+	// 1. 先试代理池（如果配了）
+	proxyMu.RLock()
+	hasProxies := len(proxyCache) > 0
+	proxyMu.RUnlock()
+
+	if hasProxies {
+		if p, ok := pickProxyWithCapacity(); ok {
+			return p, true, nil
+		}
+		// 代理池存在但都满了 → 不退回直连（因为部署者明确想用代理）
+		return Proxy{}, false, &RateLimitError{Reason: "rph", ProxyID: -1}
+	}
+
+	// 2. 没配代理池 → 用直连 slot（id=0）
+	if ok, reason := trySlotAcquire(0); ok {
+		return Proxy{}, true, nil // ProxyID=0 表示直连
+	} else {
+		return Proxy{}, false, &RateLimitError{Reason: reason, ProxyID: 0}
+	}
+}
+
+// releaseSlot 释放占用。proxyID=0 表示直连。
+func releaseSlot(proxyID int64) {
+	slotRelease(proxyID)
+}
+
 // streamGenerate POSTs to Gemini's StreamGenerate endpoint and returns raw body
 // plus proxy/timing telemetry for the metrics layer.
 // The 80-slot inner array is verbatim from the Python reference.
@@ -101,15 +147,18 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 
 	cookieStr, sapisid := loadCookie()
 
-	// Pick a proxy from the pool. Falls back to the static cfg.Proxy if pool empty.
-	proxyURL := cfg.Proxy
-	var picked Proxy
-	pickedOK := false
-	if p, ok := pickProxy(); ok {
-		picked = p
-		proxyURL = p.URL
-		pickedOK = true
+	// 通过限流器拿一个 slot（代理或直连）。所有 slot 满 → 直接 429。
+	picked, slotOK, slotErr := acquireSlot()
+	if !slotOK {
+		return nil, slotErr
 	}
+	defer releaseSlot(picked.ID) // picked.ID=0 表示直连 slot
+
+	proxyURL := picked.URL
+	if proxyURL == "" {
+		proxyURL = cfg.Proxy // fallback 静态 proxy（一般用不到）
+	}
+	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
 
 	client := getHTTPClient(proxyURL)
 	var lastErr error

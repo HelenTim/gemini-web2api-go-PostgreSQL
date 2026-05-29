@@ -129,6 +129,7 @@ func main() {
 		mux.HandleFunc("/admin/api/proxies", requireAuth(handleAdminProxies))
 		mux.HandleFunc("/admin/api/proxies/", requireAuth(handleAdminProxyItem))
 		mux.HandleFunc("/admin/api/apikey", requireAuth(handleAdminAPIKey))
+		mux.HandleFunc("/admin/api/usage", requireAuth(handleAdminUsage))
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
@@ -175,6 +176,8 @@ func main() {
 		tokInfo = "tiktoken cl100k_base"
 	}
 	fmt.Printf("  Tokenizer:   %s\n", tokInfo)
+	fmt.Printf("  Per-IP 限流: 并发=%d / RPM=%d / RPH=%d\n",
+		cfg.PerIPConcurrent, cfg.PerIPRPM, cfg.PerIPRPH)
 	fmt.Printf("  Retry:       %dx / %ds\n", cfg.RetryAttempts, cfg.RetryDelaySec)
 	fmt.Println()
 

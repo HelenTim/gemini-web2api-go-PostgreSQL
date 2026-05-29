@@ -22,6 +22,12 @@ type Config struct {
 	AdminToken     string `json:"admin_token"`
 	AdminEnabled   bool   `json:"admin_enabled"`
 	RetentionDays  int    `json:"retention_days"`
+
+	// Per-IP rate limit (一个 slot = 直连/或一个代理),0 表示不限。
+	// 默认值基于 Google 单 IP 实测容忍度：100+ 累积请求会触发 sorry/index 拦截。
+	PerIPConcurrent int `json:"per_ip_concurrent"` // 瞬时并发上限
+	PerIPRPM        int `json:"per_ip_rpm"`        // 每分钟请求上限
+	PerIPRPH        int `json:"per_ip_rph"`        // 每小时请求上限
 }
 
 var (
@@ -46,6 +52,10 @@ func defaultConfig() Config {
 		AdminToken:     "",
 		AdminEnabled:   true,
 		RetentionDays:  30,
+		// 实测：单 IP 累积 100+ 请求触发 sorry/index 拦截 → RPH=80 留 20% 余量。
+		PerIPConcurrent: 5,
+		PerIPRPM:        30,
+		PerIPRPH:        80,
 	}
 }
 
