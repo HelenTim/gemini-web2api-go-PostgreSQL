@@ -130,6 +130,17 @@ const pages = {
         <p style="color: var(--muted); font-size: 12px; margin-bottom: 10px;">
           每个 IP slot（直连或单个代理）独立计数。当前限额：并发 ${(usage.items[0]||{}).limit_concurrent || '-'} / RPM ${(usage.items[0]||{}).limit_rpm || '-'} / RPH ${(usage.items[0]||{}).limit_rph || '-'}
         </p>
+        <div style="background: rgba(251,191,36,0.08); border-left: 3px solid var(--yellow); padding: 10px 14px; margin-bottom: 14px; font-size: 12.5px; line-height: 1.6; color: var(--text);">
+          <b style="color: var(--yellow);">⚠ 为什么要限流</b><br>
+          实测单 IP 累积约 100 次请求会被 Google 重定向到 <code>google.com/sorry/index</code>，
+          所有后续请求 6-24 小时内全部失败，只能等待或换 IP 才能恢复。<br>
+          本地限流主动拦下超量请求 → 返回 <b>HTTP 429</b>（不消耗 Google 配额），
+          请求被推迟到 slot 有空位再发。<br><br>
+          <b>每个 IP slot 独立计数：</b>直连 = 主机 IP 一个 slot；每个代理一个 slot。
+          <b>配越多代理 → 总容量线性放大</b>（5 代理 = 5 倍并发/RPM/RPH 总容量）。<br>
+          配置代理在「代理池」页面，限额改 <code>config.json</code> 的
+          <code>per_ip_concurrent</code> / <code>per_ip_rpm</code> / <code>per_ip_rph</code> 后重启即可。
+        </div>
         <table>
           <thead><tr><th>IP slot</th><th>并发</th><th>RPM</th><th>RPH</th><th>占用率（最严的那项）</th></tr></thead>
           <tbody>${(usage.items || []).map(u => {
@@ -209,6 +220,13 @@ const pages = {
         <h2>代理池
           <span class="controls"><button class="btn" onclick="addProxy()">+ 添加代理</button></span>
         </h2>
+        <p style="color: var(--muted); font-size: 12.5px; margin-bottom: 14px; line-height: 1.6;">
+          每个代理是一个独立的 IP slot，享有独立的并发/RPM/RPH 配额。
+          <b>配越多代理 → 总容量线性放大</b>。请求会自动找有空位的代理；都满 → 返回 HTTP 429。
+          失败 5 次自动熔断（"重置"按钮可手动恢复）。<br>
+          <span style="color: var(--yellow);">注意：</span>
+          配了至少一个代理后，<b>不会再退回直连</b>（避免代理满了把主机 IP 也打爆）。
+        </p>
         <table>
           <thead><tr>
             <th>ID</th><th>名称</th><th>代理 URL</th><th>状态</th>
@@ -236,6 +254,8 @@ const pages = {
 
   settings: async () => {
     const k = await api('/admin/api/apikey');
+    const usage = await api('/admin/api/usage');
+    const limits = (usage.items[0] || {});
     return `
       <div class="panel">
         <h2>API Key（用于 /v1/* 接口鉴权）</h2>
@@ -263,6 +283,28 @@ const pages = {
   -H "Content-Type: application/json" \\
   -d '{"model":"gemini-3.5-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
         </div>
+      </div>
+      <div class="panel">
+        <h2>每 IP 限流配置</h2>
+        <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">
+          单个 IP slot（直连或一个代理）的配额上限。修改 <code>config.json</code> 的
+          <code>per_ip_*</code> 字段后重启生效。
+        </p>
+        <table>
+          <thead><tr><th>配额维度</th><th>当前值</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><b>并发</b></td><td>${limits.limit_concurrent || '-'}</td>
+                <td>同一时刻最多有几个请求在飞</td></tr>
+            <tr><td><b>RPM</b></td><td>${limits.limit_rpm || '-'}</td>
+                <td>滚动 60 秒窗口内最多请求数</td></tr>
+            <tr><td><b>RPH</b></td><td>${limits.limit_rph || '-'}</td>
+                <td>滚动 1 小时窗口内最多请求数</td></tr>
+          </tbody>
+        </table>
+        <p style="color: var(--muted); margin-top: 12px; font-size: 12px;">
+          实测：单 IP 累积约 100 次请求会触发 Google 拦截 6-24 小时。默认 RPH=80 留 20% 余量。
+          要支撑更高产能 → 在「代理池」页面加代理（每个代理是独立的 slot）。
+        </p>
       </div>
       <div class="panel">
         <h2>会话</h2>
