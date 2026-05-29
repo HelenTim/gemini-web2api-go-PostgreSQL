@@ -74,6 +74,41 @@
   details summary { cursor: pointer; color: var(--accent); }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* 自定义弹窗 */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999; backdrop-filter: blur(2px);
+    animation: fade-in .15s ease-out;
+  }
+  @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; min-width: 420px; max-width: 560px;
+    padding: 24px; box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+    animation: pop-in .18s ease-out;
+  }
+  @keyframes pop-in { from { transform: scale(.96); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+  .modal h3 { font-size: 15px; margin-bottom: 6px; color: var(--text); }
+  .modal .desc { color: var(--muted); font-size: 12.5px; margin-bottom: 18px; line-height: 1.5; }
+  .modal .field { margin-bottom: 14px; }
+  .modal .field label {
+    display: block; color: var(--muted); font-size: 11.5px;
+    margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .modal .field input, .modal .field textarea {
+    width: 100%; padding: 9px 11px; font-size: 13px;
+    font-family: "Consolas", "Menlo", monospace;
+  }
+  .modal .field .hint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+  .modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
+  .modal .actions button { padding: 8px 18px; font-size: 13px; }
+  .modal .err {
+    background: rgba(248,113,113,0.1); border-left: 3px solid var(--red);
+    padding: 8px 12px; color: var(--red); font-size: 12px; margin-bottom: 12px;
+    border-radius: 4px;
+  }
 </style>
 </head>
 <body>
@@ -415,14 +450,37 @@ function escapeHtml(s) {
 }
 
 async function addProxy() {
-  const name = prompt('代理名称（例如 vps-uk-1）：'); if (!name) return;
-  const url = prompt('代理 URL（例如 http://user:pass@1.2.3.4:8080）：'); if (!url) return;
-  await api('/admin/api/proxies', { method: 'POST', body: JSON.stringify({ name, url, weight: 1 }) });
+  const data = await modalForm({
+    title: '添加代理',
+    desc: '一个代理 = 一个独立 IP slot，享有独立的并发/RPM/RPH 配额。',
+    fields: [
+      { name: 'name', label: '名称', placeholder: 'vps-uk-1', required: true,
+        hint: '随便起，admin 面板里用来区分' },
+      { name: 'url', label: '代理 URL', placeholder: 'http://user:pass@1.2.3.4:8080', required: true,
+        hint: '支持 http:// / https:// / socks5:// 协议' },
+    ],
+  });
+  if (!data) return;
+  const r = await fetch('/admin/api/proxies', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: data.name, url: data.url, weight: 1 }),
+  });
+  const j = await r.json();
+  if (j.error) return flash('添加失败：' + j.error);
+  flash('代理已添加');
   await switchPage('proxies');
 }
 async function delProxy(id) {
-  if (!confirm('确定删除代理 ' + id + ' 吗？')) return;
+  const ok = await modalConfirm({
+    title: '删除代理',
+    desc: `确定删除代理 #${id}？此操作不可撤销。`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   await api('/admin/api/proxies/' + id, { method: 'DELETE' });
+  flash('已删除');
   await switchPage('proxies');
 }
 async function toggleProxy(id) {
@@ -431,6 +489,7 @@ async function toggleProxy(id) {
 }
 async function resetProxy(id) {
   await api('/admin/api/proxies/' + id + '/reset', { method: 'POST' });
+  flash('已重置失败计数');
   await switchPage('proxies');
 }
 async function doLogout() {
@@ -511,18 +570,30 @@ async function copyKey() {
 }
 
 async function rotateKey() {
-  if (!confirm('生成新的随机 Key？现有客户端在重新配置前将无法访问。')) return;
-  const r = await api('/admin/api/apikey', { method: 'POST' });
+  const ok = await modalConfirm({
+    title: '生成新 Key',
+    desc: '现有客户端在重新配置前将无法访问。确定继续？',
+    confirmText: '生成新 Key',
+    danger: true,
+  });
+  if (!ok) return;
+  await api('/admin/api/apikey', { method: 'POST' });
   flash('已生成新 Key');
   await switchPage('settings');
-  // briefly reveal so user can copy it
   const el = document.getElementById('apiKeyView');
   if (el) { el.type = 'text'; }
 }
 
 async function customKey() {
-  const k = prompt('请输入自定义 API Key（至少 20 字符）：');
+  const k = await modalPrompt({
+    title: '设置自定义 API Key',
+    desc: '至少 20 字符。设置后所有客户端要更换为新 Key。',
+    label: '新 Key',
+    placeholder: 'sk-gemini-...',
+    password: true,
+  });
   if (!k) return;
+  if (k.length < 20) return flash('Key 至少 20 字符');
   const r = await fetch('/admin/api/apikey', {
     method: 'PATCH', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -530,7 +601,7 @@ async function customKey() {
   });
   const j = await r.json();
   if (j.ok) { flash('Key 已更新'); await switchPage('settings'); }
-  else alert('错误：' + (j.error || '未知错误'));
+  else flash('错误：' + (j.error || '未知错误'));
 }
 
 function flash(msg) {
@@ -539,6 +610,116 @@ function flash(msg) {
   t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 1800);
+}
+
+// 自定义弹窗 ──────────────────────────────────────────────────────────────
+//   modalConfirm({ title, desc, confirmText, danger })       -> bool
+//   modalPrompt({ title, desc, label, placeholder, value })   -> string|null
+//   modalForm({ title, desc, fields: [{name,label,...}], submitText })
+//                                                            -> obj|null
+
+function buildModal({ title, desc, bodyHTML, submitText, danger, allowEnter, onSubmit }) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        ${title ? `<h3>${escapeHtml(title)}</h3>` : ''}
+        ${desc ? `<div class="desc">${desc}</div>` : ''}
+        <div class="modal-err" style="display:none;"></div>
+        <div class="modal-body">${bodyHTML || ''}</div>
+        <div class="actions">
+          <button class="btn muted" data-act="cancel">取消</button>
+          <button class="btn ${danger ? 'danger' : ''}" data-act="ok">${escapeHtml(submitText || '确定')}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const finish = (val) => {
+      overlay.remove();
+      document.removeEventListener('keydown', keyHandler);
+      resolve(val);
+    };
+    const showErr = (msg) => {
+      const e = overlay.querySelector('.modal-err');
+      e.textContent = msg;
+      e.style.display = msg ? 'block' : 'none';
+      e.className = 'modal-err err';
+    };
+
+    overlay.querySelector('[data-act=cancel]').onclick = () => finish(null);
+    overlay.querySelector('[data-act=ok]').onclick = async () => {
+      const result = onSubmit ? await onSubmit(overlay) : true;
+      if (result === false) return; // validation failed
+      if (result && typeof result === 'object' && result.error) { showErr(result.error); return; }
+      finish(result === true ? true : result);
+    };
+    overlay.onclick = (e) => { if (e.target === overlay) finish(null); };
+
+    const keyHandler = (e) => {
+      if (e.key === 'Escape') finish(null);
+      if (e.key === 'Enter' && allowEnter && document.activeElement.tagName !== 'TEXTAREA') {
+        overlay.querySelector('[data-act=ok]').click();
+      }
+    };
+    document.addEventListener('keydown', keyHandler);
+
+    // 自动 focus 第一个 input
+    setTimeout(() => {
+      const first = overlay.querySelector('input,textarea');
+      if (first) first.focus();
+    }, 50);
+  });
+}
+
+function modalConfirm({ title, desc, confirmText = '确定', danger = false }) {
+  return buildModal({
+    title, desc, bodyHTML: '', submitText: confirmText, danger, allowEnter: true,
+    onSubmit: () => true,
+  });
+}
+
+function modalPrompt({ title, desc, label, placeholder = '', value = '', hint, password = false }) {
+  return buildModal({
+    title, desc, allowEnter: true,
+    bodyHTML: `<div class="field">
+      ${label ? `<label>${escapeHtml(label)}</label>` : ''}
+      <input type="${password ? 'password' : 'text'}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}" />
+      ${hint ? `<div class="hint">${hint}</div>` : ''}
+    </div>`,
+    submitText: '确定',
+    onSubmit: (overlay) => {
+      const v = overlay.querySelector('input').value;
+      if (!v) return { error: '不能为空' };
+      return v;
+    },
+  });
+}
+
+// fields: [{ name, label, placeholder, hint, value, required, password }]
+function modalForm({ title, desc, fields, submitText = '提交' }) {
+  const html = fields.map(f => `
+    <div class="field">
+      <label>${escapeHtml(f.label)}${f.required ? ' *' : ''}</label>
+      <input data-name="${escapeHtml(f.name)}" type="${f.password ? 'password' : 'text'}"
+             placeholder="${escapeHtml(f.placeholder || '')}"
+             value="${escapeHtml(f.value || '')}" />
+      ${f.hint ? `<div class="hint">${f.hint}</div>` : ''}
+    </div>`).join('');
+  return buildModal({
+    title, desc, bodyHTML: html, submitText, allowEnter: true,
+    onSubmit: (overlay) => {
+      const out = {};
+      for (const f of fields) {
+        const el = overlay.querySelector(`[data-name="${f.name}"]`);
+        const v = (el.value || '').trim();
+        if (f.required && !v) return { error: `「${f.label}」不能为空` };
+        if (f.minLength && v.length < f.minLength) return { error: `「${f.label}」至少 ${f.minLength} 字符` };
+        out[f.name] = v;
+      }
+      return out;
+    },
+  });
 }
 
 // ─── Routing / shell ────────────────────────────────────────────────────────
