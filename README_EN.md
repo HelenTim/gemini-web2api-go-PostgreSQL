@@ -8,7 +8,7 @@
 
 Convert Google Gemini's web interface into an OpenAI-compatible API. **Single binary**, **anonymous access works** (or attach a Google cookie for Pro routing), **Chrome 146 TLS fingerprint**, **SQLite persistence**, ships with a built-in **admin dashboard**.
 
-> Rewritten from [gemini-web2api](https://github.com/zhongruichen/gemini-web2api) (Python single-file). Protocol layer field-by-field equivalence verified.
+> Protocol layer field-by-field equivalence verified against a community Python single-file reference implementation (also named `gemini-web2api`, stdlib only).
 
 ---
 
@@ -24,9 +24,11 @@ Convert Google Gemini's web interface into an OpenAI-compatible API. **Single bi
 
 Not a wrapper around Google's official API ([generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)) — instead, it directly proxies the **browser-side StreamGenerate protocol**, so **no Google API key, no paid quota required**.
 
-## vs the Python version
+## vs the reference implementation
 
-| | [Python single-file](https://github.com/zhongruichen/gemini-web2api) | gemini-web2api-go |
+A community Python single-file implementation (also named `gemini-web2api`, stdlib only) inspired this project's protocol layer. We carried it over verbatim but added engineering features on top:
+
+| | Python single-file | gemini-web2api-go |
 |---|---|---|
 | Deploy | `python gemini_web2api.py` | Single ~25MB Docker image |
 | Dependencies | stdlib only | Static binary, zero runtime deps |
@@ -235,7 +237,7 @@ docker-compose.yml   Single-container, sqlite volume, local 8083 exposure
 
 ## Acknowledgments
 
-- [gemini-web2api](https://github.com/zhongruichen/gemini-web2api) — Python single-file version, the protocol-layer reference implementation for this project
+- Community Python single-file reference (also named `gemini-web2api`) — source of the protocol-layer details (80-slot payload, wrb.fr parsing, model ID mapping)
 - [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — Chrome TLS fingerprinting library
 - [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — Pure-Go SQLite (CGO-free, builds on alpine)

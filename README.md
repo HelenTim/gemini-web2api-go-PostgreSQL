@@ -8,7 +8,7 @@
 
 把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑，挂 Google cookie 可解锁 Pro），**Chrome 146 真指纹**，**SQLite 持久化**，自带**中文管理面板**。
 
-> 重写自 [gemini-web2api](https://github.com/zhongruichen/gemini-web2api)（Python 单文件版），协议层逐字段对齐验证。
+> 协议层逐字段对齐了一份社区的 Python 单文件参考实现（也叫 `gemini-web2api`，stdlib only），等价性已验证。
 
 ---
 
@@ -25,9 +25,11 @@
 
 不是 Google 官方 API（[generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)）的二次封装——**直接反代浏览器协议**，所以**不需要 Google API Key、不需要付费配额**。
 
-## 跟 Python 版的区别
+## 跟参考实现的区别
 
-| 维度 | [Python 单文件版](https://github.com/zhongruichen/gemini-web2api) | gemini-web2api-go |
+社区有一份单文件 Python 参考实现（同名 `gemini-web2api`，stdlib only）。本项目协议层照搬，但工程能力差异较大：
+
+| 维度 | Python 单文件版 | gemini-web2api-go |
 |---|---|---|
 | 部署 | `python gemini_web2api.py` | 单二进制（~25MB Docker 镜像） |
 | 依赖 | stdlib only | 编译产物零外部依赖 |
@@ -236,7 +238,7 @@ docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
 
 ## 致谢
 
-- [gemini-web2api](https://github.com/zhongruichen/gemini-web2api) — Python 单文件版，本项目协议层的参考实现
+- 社区 Python 单文件参考实现（同名 `gemini-web2api`）—— 协议层（80 槽位 payload、wrb.fr 解析、模型 ID 映射）的参考来源
 - [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — Chrome 真指纹 TLS 库
 - [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — 纯 Go SQLite（CGO-free，alpine 直接编）
