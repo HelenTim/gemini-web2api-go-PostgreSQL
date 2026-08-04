@@ -491,7 +491,8 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	text := extractResponseText(string(raw))
 	if text == "" {
 		res.Status = "upstream_error"
-		res.Diagnostic = "上游 200 但解析不到回复文本，可能 wrb.fr 帧格式变了或被空响应。"
+		res.Diagnostic = "上游 200 但只回了结束帧、没有内容帧，通常是请求被服务端拒绝" +
+			"（例如带了不被接受的会话 id 或工具开关），不是帧格式变更。"
 		return res
 	}
 

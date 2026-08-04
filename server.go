@@ -58,8 +58,15 @@ func callGemini(prompt string, mc ModelConfig, thinkMode int, tools []map[string
 		return "", nil, nil, err
 	}
 	text := extractResponseText(res.Raw)
+	if text == "" {
+		// 上游拒绝时只回一个结束帧、没有内容帧（实测多轮会话 id 被拒时 raw 仅 216
+		// 字节）。这种情况必须报错：以前会当成空回复返回 200 + content:null，
+		// 客户端看不出请求其实失败了。
+		// 注意不能用 BardErrorInfo 判错 —— 正常响应的结束帧里也带这个码。
+		return "", nil, res, fmt.Errorf("upstream returned no content frame (raw %d bytes)", len(res.Raw))
+	}
 	var toolCalls []ToolCall
-	if len(tools) > 0 && text != "" {
+	if len(tools) > 0 {
 		text, toolCalls = parseToolCalls(text)
 	}
 	return text, toolCalls, res, nil
