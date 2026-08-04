@@ -6,7 +6,7 @@
 
 [中文文档](README.md) | English
 
-Convert Google Gemini's web interface into an OpenAI-compatible API. **Single binary**, **anonymous access works** (or attach a Google cookie for Pro routing), **Chrome 146 TLS fingerprint**, **SQLite persistence**, ships with a built-in **admin dashboard**.
+Convert Google Gemini's web interface into an OpenAI-compatible API. **Single binary**, **anonymous access works** **Chrome 146 TLS fingerprint**, **SQLite persistence**, ships with a built-in **admin dashboard**.
 
 > Protocol layer field-by-field equivalence verified against a community Python single-file reference implementation (also named `gemini-web2api`, stdlib only).
 
@@ -75,7 +75,7 @@ curl http://localhost:8083/v1/chat/completions \
   -H "Authorization: Bearer sk-gemini-..." \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-3.5-flash",
+    "model": "gemini-3.6-flash",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
@@ -89,7 +89,7 @@ client = OpenAI(
     api_key="sk-gemini-..."  # see admin dashboard
 )
 resp = client.chat.completions.create(
-    model="gemini-3.5-flash-thinking",
+    model="gemini-3.6-flash",
     messages=[{"role": "user", "content": "Explain quantum entanglement"}]
 )
 print(resp.choices[0].message.content)
@@ -106,20 +106,42 @@ Open `http://localhost:8083/admin`, log in with your `--admin-token`.
 
 ## Models
 
-| Model | Description | Output |
-|---|---|---|
-| `gemini-3.5-flash` | Fast general-purpose | ~12k chars |
-| `gemini-3.5-flash-thinking` | Deep thinking, longest output | **~20k chars** |
-| `gemini-3.5-flash-thinking-lite` | Adaptive thinking depth | ~15k chars |
-| `gemini-3.1-pro` | Pro (cookie required for true Pro routing) | ~12k chars |
-| `gemini-auto` | Auto model selection | varies |
-| `gemini-flash-lite` | Lightweight fast | ~10k chars |
+Gemini's backend only recognises three models (list comes from
+`batchexecute?rpcids=otAQ7b`):
+
+| Model | Description |
+|---|---|
+| `gemini-3.6-flash` | All-around, default |
+| `gemini-3.5-flash-lite` | Fastest, lightweight |
+| `gemini-3.1-pro` | Not reachable on free accounts, see below |
+
+These legacy names are kept as aliases of `gemini-3.6-flash` (`gemini-flash-lite`
+maps to `gemini-3.5-flash-lite`): `gemini-3.5-flash`, `gemini-3.5-flash-thinking`,
+`gemini-3.5-flash-thinking-lite`, `gemini-auto`, `gemini-flash-lite`. The backend
+list no longer has thinking / auto entries.
 
 Append `@think=N` to any model name to override thinking depth (`0` deepest, `4` shallowest):
 
 ```
-gemini-3.5-flash-thinking@think=2
+gemini-3.6-flash@think=2
 ```
+
+> `@think=N` goes into `inner[17]` of the request. Whether that field still has
+> any effect is **unverified** — the controlled runs did not produce enough
+> samples to separate `think=0` from `think=4`.
+
+### Known capability boundaries
+
+Anonymous calls (no cookie) only reach the two text models above plus Gemini's
+built-in web search. Image generation, music, video, deep research, canvas and
+extended thinking all require a signed-in session; anonymous requests are either
+rejected or silently downgraded to plain text. `gemini-3.1-pro` is downgraded to
+3.6 Flash even with a free account's cookie attached; paid subscriptions untested.
+
+**Multi-turn context works by flattening `messages` into a single prompt — it is
+not protocol-level multi-turn.** Gemini's conversation ids (`c_*` / `r_*` / `rc_*`)
+are rejected by the backend on this path, so flattening is the only workable
+approach. Do not "fix" it.
 
 ## Configuration
 
@@ -136,7 +158,7 @@ gemini-3.5-flash-thinking@think=2
   "admin_token": "",
   "request_timeout_sec": 180,
   "retry_attempts": 3,
-  "default_model": "gemini-3.5-flash",
+  "default_model": "gemini-3.6-flash",
   "per_ip_concurrent": 5,
   "per_ip_rpm": 30,
   "per_ip_rph": 80
@@ -149,9 +171,15 @@ Environment variables:
 - `ADMIN_TOKEN` — admin dashboard login token
 - `API_KEY` — locks the `/v1/*` API key (not editable from admin UI)
 
-## Pro models (optional)
+## Cookie (optional)
 
-Anonymous access works for all models, but `gemini-3.1-pro` falls back to Flash without a cookie. Attach any **free** Google account cookie (no paid subscription needed):
+Attaching a Google account cookie makes requests run as a signed-in session.
+**It does not unlock `gemini-3.1-pro`** — with a free account the Pro model id is
+still downgraded and the backend reports 3.6 Flash. Paid subscriptions untested.
+
+A signed-in session unlocks image generation (Nano Banana 2), music (Lyria 3),
+video, deep research, canvas and extended thinking on the web UI, but **none of
+that is implemented here yet**; today the cookie only changes rate-limit attribution.
 
 1. Sign in to [gemini.google.com](https://gemini.google.com)
 2. DevTools (F12) → Application → Cookies → `https://gemini.google.com`
@@ -198,12 +226,12 @@ Proxied connections use stdlib `net/http` + `http.ProxyURL` (best compatibility)
 
 | Endpoint | Status | Notes |
 |---|---|---|
-| `POST /v1/chat/completions` | ✅ | Including `stream: true` SSE |
+| `POST /v1/chat/completions` | ✅ | `stream: true` supported, but the full reply is fetched first and then chunked — not incremental streaming |
 | `POST /v1/responses` | ✅ | OpenAI Responses API (used by Codex CLI) |
-| `GET /v1/models` | ✅ | Lists all 6 models |
+| `GET /v1/models` | ✅ | 3 real models + 5 legacy aliases |
 | Function calling | ⚠️ | Prompt-level implementation (model emits ` ```tool_call``` ` blocks parsed via regex), not a true protocol layer. Occasional formatting misses |
-| Vision / file input | ❌ | Web protocol does not support file upload |
-| Audio | ❌ | Web protocol limitation |
+| Vision / file input | ❌ | Not implemented. The web protocol does support it (`push.clients6.google.com/upload/`, two-step resumable) but requires a signed-in session |
+| Audio | ❌ | Not implemented. The web UI has music generation (Lyria 3), signed-in only |
 
 ## Project layout
 
@@ -211,7 +239,7 @@ Proxied connections use stdlib `net/http` + `http.ProxyURL` (best compatibility)
 main.go              Entry point + flag parsing + route registration
 config.go            Config loading + DEFAULT_CONFIG
 client.go            tls-client (chrome146) + stdlib (proxy) dual client
-gemini.go            80-slot payload + StreamGenerate + wrb.fr stream parser
+gemini.go            model table + 80-slot payload + model header + StreamGenerate + wrb.fr stream parser
 messages.go          OpenAI messages → prompt + tool_call parsing
 server.go            /v1/* handlers + rate-limit gate + metrics writes
 ratelimit.go         Per-IP-slot concurrency/RPM/RPH limiter
@@ -230,9 +258,9 @@ docker-compose.yml   Single-container, sqlite volume, local 8083 exposure
 ## Limitations
 
 - **Anonymous use**: single IP gets blocked after ~100 cumulative requests for 6-24 hours → use proxy pool to scale
-- **Pro routing**: requires a free Google account cookie (no paid subscription needed)
+- **Pro routing**: not reachable. Free accounts get downgraded to 3.6 Flash even when signed in; paid subscriptions untested
 - **Function calling**: prompt-level emulation, the model doesn't always follow the format perfectly
-- **Multimodal**: not supported (limitation of the underlying web protocol)
+- **Multimodal**: not supported here. The web protocol does have image/file upload, image, music and video generation, but all require a signed-in session and none is implemented yet
 - **Token counts**: tiktoken estimation (Gemini's actual tokenizer is not public), within ±20% of true values
 
 ## Acknowledgments
