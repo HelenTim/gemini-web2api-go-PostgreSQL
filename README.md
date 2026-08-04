@@ -6,7 +6,7 @@
 
 中文 | [English](README_EN.md)
 
-把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑，挂 Google cookie 可解锁 Pro），**Chrome 146 真指纹**，**SQLite 持久化**，自带**中文管理面板**。
+把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑），**Chrome 146 真指纹**，**SQLite 持久化**，自带**中文管理面板**。
 
 > 协议层逐字段对齐了一份社区的 Python 单文件参考实现（也叫 `gemini-web2api`，stdlib only），等价性已验证。
 
@@ -76,7 +76,7 @@ curl http://localhost:8083/v1/chat/completions \
   -H "Authorization: Bearer sk-gemini-..." \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-3.5-flash",
+    "model": "gemini-3.6-flash",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
@@ -90,7 +90,7 @@ client = OpenAI(
     api_key="sk-gemini-..."  # admin 面板里看
 )
 resp = client.chat.completions.create(
-    model="gemini-3.5-flash-thinking",
+    model="gemini-3.6-flash",
     messages=[{"role": "user", "content": "解释量子纠缠"}]
 )
 print(resp.choices[0].message.content)
@@ -107,20 +107,38 @@ print(resp.choices[0].message.content)
 
 ## 模型
 
-| 模型 | 描述 | 输出长度 |
-|---|---|---|
-| `gemini-3.5-flash` | 快速通用 | ~12k 字符 |
-| `gemini-3.5-flash-thinking` | 深度思考，最长输出 | **~20k 字符** |
-| `gemini-3.5-flash-thinking-lite` | 自适应思考深度 | ~15k 字符 |
-| `gemini-3.1-pro` | Pro 模型（需 cookie 才走真 Pro 路由）| ~12k 字符 |
-| `gemini-auto` | 自动选模型 | varies |
-| `gemini-flash-lite` | 轻量极速 | ~10k 字符 |
+Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=otAQ7b`）：
+
+| 模型 | 描述 |
+|---|---|
+| `gemini-3.6-flash` | 全方位，默认 |
+| `gemini-3.5-flash-lite` | 极速、轻量 |
+| `gemini-3.1-pro` | 免费账号拿不到，见下 |
+
+以下旧名保留为别名，都指向 `gemini-3.6-flash`（`gemini-flash-lite` 指向
+`gemini-3.5-flash-lite`）：`gemini-3.5-flash`、`gemini-3.5-flash-thinking`、
+`gemini-3.5-flash-thinking-lite`、`gemini-auto`、`gemini-flash-lite`。服务端
+清单里已经没有 thinking / auto 这些条目了。
 
 模型名后加 `@think=N` 可覆盖思考深度（`0` 最深 ↔ `4` 最浅）：
 
 ```
-gemini-3.5-flash-thinking@think=2
+gemini-3.6-flash@think=2
 ```
+
+> `@think=N` 写进请求的 `inner[17]`。该字段现在还有没有效果**未经证实**——
+> 对照实验的样本量不足以区分 `think=0` 和 `think=4` 的输出差异。
+
+### 已知的能力边界
+
+匿名调用（不挂 cookie）只能拿到上面两个文本模型 + Gemini 自带的联网搜索。
+生图、音乐、视频、深度研究、画布、扩展思考都需要登录，匿名请求会被拒或降级
+成普通文本。`gemini-3.1-pro` 即使挂了免费账号的 cookie 也会被降级到 3.6
+Flash，付费订阅未验证。
+
+**多轮上下文是靠把 `messages` 拼成单个 prompt 实现的，不是协议级多轮。**
+Gemini 的会话 id（`c_*` / `r_*` / `rc_*`）在这条路径上会被服务端拒绝，所以
+拼 prompt 是唯一可行方式，别改。
 
 ## 配置
 
@@ -137,7 +155,7 @@ gemini-3.5-flash-thinking@think=2
   "admin_token": "",
   "request_timeout_sec": 180,
   "retry_attempts": 3,
-  "default_model": "gemini-3.5-flash",
+  "default_model": "gemini-3.6-flash",
   "per_ip_concurrent": 5,
   "per_ip_rpm": 30,
   "per_ip_rph": 80
@@ -150,9 +168,14 @@ gemini-3.5-flash-thinking@think=2
 - `ADMIN_TOKEN` — 管理面板登录 token
 - `API_KEY` — 锁定 `/v1/*` API key（不会显示在 admin UI 的"自定义"按钮里）
 
-## Pro 模型 (可选)
+## Cookie（可选）
 
-匿名可调所有模型，但 `gemini-3.1-pro` 不挂 cookie 会被路由回 Flash。挂一个 free Google 账号 cookie 即可走真 Pro 路由（不需要付费订阅）：
+挂 Google 账号 cookie 后请求会走登录态。**但 `gemini-3.1-pro` 拿不到**——实测
+免费账号即使登录，请求 Pro 的模型 id 仍会被降级，服务端回报的是 3.6 Flash；
+付费订阅账号未验证。
+
+登录态在网页端能解锁生图（Nano Banana 2）、音乐（Lyria 3）、视频、深度研究、
+画布、扩展思考，但**本项目尚未实现这些**，挂 cookie 目前只影响限流归属。
 
 1. 浏览器登录 [gemini.google.com](https://gemini.google.com)
 2. DevTools (F12) → Application → Cookies → `https://gemini.google.com`
@@ -199,12 +222,12 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 
 | 路径 | 状态 | 备注 |
 |---|---|---|
-| `POST /v1/chat/completions` | ✅ | 含 `stream: true` SSE |
+| `POST /v1/chat/completions` | ✅ | 支持 `stream: true`，但是先取完整回复再切成 SSE 块，不是增量流式 |
 | `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用） |
-| `GET /v1/models` | ✅ | 列出 6 个模型 |
+| `GET /v1/models` | ✅ | 3 个真模型 + 5 个旧名别名 |
 | Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。模型偶尔不按格式返回 |
-| Vision / 图片输入 | ❌ | 网页协议不支持文件上传 |
-| Audio | ❌ | 网页协议不支持 |
+| Vision / 图片输入 | ❌ | 未实现。网页协议本身支持（`push.clients6.google.com/upload/` 两步 resumable），但需要登录态 |
+| Audio | ❌ | 未实现。网页端有音乐生成（Lyria 3），需要登录态 |
 
 ## 项目结构
 
@@ -212,7 +235,7 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 main.go              入口 + flag 解析 + 路由注册
 config.go            配置加载 + DEFAULT_CONFIG
 client.go            tls-client (chrome146) + stdlib (代理) 双 client
-gemini.go            80 槽位 payload + StreamGenerate + wrb.fr 流解析
+gemini.go            模型表 + 80 槽位 payload + 模型 header + StreamGenerate + wrb.fr 流解析
 messages.go          OpenAI messages → prompt + tool_call 解析
 server.go            /v1/* + 限流入口 + metrics 写入
 ratelimit.go         每 IP slot 独立并发/RPM/RPH 限流器
@@ -231,9 +254,9 @@ docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
 ## 限制
 
 - **匿名访问**：单 IP 受 Google 限流，约 100 次/几小时被拦 6-24 小时 → 配代理池放大产能
-- **Pro 路由**：要 free Google 账号 cookie，不需要付费订阅
+- **Pro 路由**：拿不到。免费账号即使挂 cookie 登录，`gemini-3.1-pro` 也会被降级到 3.6 Flash；付费订阅未验证
 - **Function calling**：prompt 级实现，模型不一定每次都按格式返回（OpenAI 真协议层我们做不到）
-- **多模态**：暂不支持（网页协议本身限制）
+- **多模态**：暂不支持。网页协议支持图片/文件上传、生图、音乐、视频，但都要登录态，本项目尚未实现
 - **token 数**：用 tiktoken 估算（Gemini 真 tokenizer 未公开），跟真值偏差 ±20% 以内
 
 ## 致谢
