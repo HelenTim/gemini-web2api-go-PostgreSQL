@@ -14,24 +14,40 @@ import (
 	"github.com/google/uuid"
 )
 
-// ModelConfig holds Gemini MODE_CATEGORY id + default thinking depth.
+// Gemini 服务端认的模型 id，来自 batchexecute?rpcids=otAQ7b 返回的权威清单。
+const (
+	hexFlash36   = "fbb127bbb056c959" // 3.6 Flash
+	hexFlashLite = "cf41b0e0dd7d53e5" // 3.5 Flash-Lite
+	hexPro31     = "9d8ca3786ebdfbea" // 3.1 Pro
+)
+
+// ModelConfig holds the server-side model id plus legacy MODE_CATEGORY + think depth.
 type ModelConfig struct {
+	// HexID 走 x-goog-ext-525001261-jspb header，是服务端唯一认的模型开关。
+	// 实测：不发这个 header 时 inner[79] 取 1..6 全部落到 3.5 Flash-Lite；
+	// header 写 3.6 而 inner[79] 写 6 时拿到的是 3.6 —— header 压过 inner[79]。
+	HexID string
 	Mode  int
 	Think int
 	Desc  string
 }
 
 var Models = map[string]ModelConfig{
-	"gemini-3.5-flash":                 {Mode: 1, Think: 4, Desc: "Fast general-purpose model"},
-	"gemini-3.5-flash-thinking":        {Mode: 2, Think: 0, Desc: "Deep thinking mode, longest output (~20k chars)"},
-	"gemini-3.1-pro":                   {Mode: 3, Think: 4, Desc: "Pro model (requires cookie for real routing)"},
-	"gemini-auto":                      {Mode: 4, Think: 4, Desc: "Auto model selection"},
-	"gemini-3.5-flash-thinking-lite":   {Mode: 5, Think: 0, Desc: "Dynamic thinking with adaptive depth"},
-	"gemini-flash-lite":                {Mode: 6, Think: 4, Desc: "Lightweight fast model"},
+	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Think: 4, Desc: "Latest all-around model"},
+	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Think: 4, Desc: "Fastest, lightweight"},
+	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Think: 4, Desc: "Free accounts are downgraded to 3.6 Flash even when signed in"},
+
+	// 旧模型名保留为别名。服务端清单里只有上面三个，
+	// thinking / auto / thinking-lite 已无对应条目。
+	"gemini-3.5-flash":               {HexID: hexFlash36, Mode: 1, Think: 4, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-3.5-flash-thinking":      {HexID: hexFlash36, Mode: 1, Think: 0, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-3.5-flash-thinking-lite": {HexID: hexFlash36, Mode: 1, Think: 0, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-auto":                    {HexID: hexFlash36, Mode: 1, Think: 4, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-flash-lite":              {HexID: hexFlashLite, Mode: 6, Think: 4, Desc: "Alias of gemini-3.5-flash-lite"},
 }
 
-// resolveModel parses "name@think=N" and returns base name, mode id, think depth.
-func resolveModel(modelName string) (string, int, int, error) {
+// resolveModel parses "name@think=N" and returns base name, model config, think depth.
+func resolveModel(modelName string) (string, ModelConfig, int, error) {
 	thinkOverride := -1
 	if idx := strings.Index(modelName, "@think="); idx >= 0 {
 		fmt.Sscanf(modelName[idx+len("@think="):], "%d", &thinkOverride)
@@ -39,13 +55,13 @@ func resolveModel(modelName string) (string, int, int, error) {
 	}
 	mc, ok := Models[modelName]
 	if !ok {
-		return "", 0, 0, fmt.Errorf("unknown model: %s", modelName)
+		return "", ModelConfig{}, 0, fmt.Errorf("unknown model: %s", modelName)
 	}
 	think := mc.Think
 	if thinkOverride >= 0 {
 		think = thinkOverride
 	}
-	return modelName, mc.Mode, think, nil
+	return modelName, mc, think, nil
 }
 
 // StreamResult holds raw body + per-request proxy + timing info.
@@ -106,7 +122,7 @@ func releaseSlot(proxyID int64) {
 // streamGenerate POSTs to Gemini's StreamGenerate endpoint and returns raw body
 // plus proxy/timing telemetry for the metrics layer.
 // The 80-slot inner array is verbatim from the Python reference.
-func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error) {
+func streamGenerate(prompt string, mc ModelConfig, thinkMode int) (*StreamResult, error) {
 	inner := make([]interface{}, 80)
 	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
 	inner[1] = []interface{}{"en"}
@@ -124,7 +140,7 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 	inner[59] = uuid.NewString()
 	inner[61] = []interface{}{}
 	inner[68] = 1
-	inner[79] = modelID
+	inner[79] = mc.Mode
 
 	innerJSON, err := json.Marshal(inner)
 	if err != nil {
@@ -161,7 +177,7 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 	}
 	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
 
-	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid)
+	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
 	var lastErr error
 	t0 := time.Now()
 	for attempt := 0; attempt < cfg.RetryAttempts; attempt++ {
@@ -204,7 +220,8 @@ func streamGenerate(prompt string, modelID, thinkMode int) (*StreamResult, error
 }
 
 // buildGeminiHeaders 准备 StreamGenerate 必需的应用层 header。
-func buildGeminiHeaders(cookieStr, sapisid string) map[string]string {
+// hexID 决定服务端用哪个模型；留空则服务端一律回落到 3.5 Flash-Lite。
+func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 	h := map[string]string{
 		"Accept":            "*/*",
 		"Accept-Language":   "en-US,en;q=0.9",
@@ -213,6 +230,9 @@ func buildGeminiHeaders(cookieStr, sapisid string) map[string]string {
 		"Referer":           "https://gemini.google.com/app",
 		"X-Same-Domain":     "1",
 		"X-Goog-AuthUser":   "0",
+	}
+	if hexID != "" {
+		h["x-goog-ext-525001261-jspb"] = fmt.Sprintf(`[1,null,null,null,"%s"]`, hexID)
 	}
 	if cookieStr != "" {
 		h["Cookie"] = cookieStr
@@ -378,7 +398,8 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	inner[59] = uuid.NewString()
 	inner[61] = []interface{}{}
 	inner[68] = 1
-	inner[79] = 1 // FAST 模式（mode=1 = gemini-3.5-flash）
+	probeModel := Models["gemini-3.6-flash"]
+	inner[79] = probeModel.Mode
 
 	innerJSON, _ := json.Marshal(inner)
 	outer := []interface{}{nil, string(innerJSON)}
@@ -394,7 +415,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	)
 
 	cookieStr, sapisid := loadCookie()
-	headers := buildGeminiHeaders(cookieStr, sapisid)
+	headers := buildGeminiHeaders(cookieStr, sapisid, probeModel.HexID)
 
 	// 复用主流程同款 client 选择规则:有代理走 stdlib，没代理走 tls-client。
 	// 但 probe 需要看 302 的 Location header,所以这里直接发不用 doGeminiRequest。
