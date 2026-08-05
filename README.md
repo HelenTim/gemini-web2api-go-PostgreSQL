@@ -36,7 +36,7 @@
 | 指纹 | urllib 默认（Google 视作 SDK） | **utls Chrome 146**（视作浏览器） |
 | API 鉴权 | ❌ 裸奔 | ✅ Bearer token / x-api-key |
 | 持久化 | ❌ 无 | ✅ SQLite，30 天明细 + 永久聚合 |
-| 管理面板 | ❌ | ✅ 中文 Web UI（仪表盘 / 请求记录 / 代理池 / 设置） |
+| 管理面板 | ❌ | ✅ 中文 Web UI（概览 / 请求记录 / 代理池 / Cookie 池 / 设置） |
 | 限流保护 | ❌ | ✅ 每 IP slot 独立并发/RPM/RPH 限额 |
 | 代理池 | 单一静态代理 | ✅ 运行时增删改 + 失败熔断 + 轮询调度 |
 | 隐私 | n/a | ✅ Prompt/Response 内容**永不入库**，只存元数据 |
