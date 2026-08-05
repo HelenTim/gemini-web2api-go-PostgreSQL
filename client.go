@@ -162,9 +162,18 @@ func currentCookieRaw() string {
 	return v
 }
 
-// loadCookie 返回 (cookie 串, SAPISID)。两种输入格式都吃：
-// 浏览器直接复制的 "k=v; k=v" 一行，或 {"cookie":"...","sapisid":"..."} 的 JSON。
+// loadCookie 返回 (cookie 串, SAPISID)。
+//
+// 优先走 cookie 池：挑一个 enabled 账号（最久未用优先，自动轮转分散单 IP 上限）。
+// 池空时回落到旧的单 cookie（面板 kv 存的或 --cookie-file），保持向后兼容。
 func loadCookie() (string, string) {
+	if a, ok := pickCookieAccount(); ok {
+		return a.Cookie, extractSAPISID(a.Cookie)
+	}
+
+	// ── 池空：回落旧单 cookie 路径 ──
+	// 两种输入格式都吃：浏览器直接复制的 "k=v; k=v" 一行，
+	// 或 {"cookie":"...","sapisid":"..."} 的 JSON。
 	content := currentCookieRaw()
 	if content == "" {
 		return "", ""
