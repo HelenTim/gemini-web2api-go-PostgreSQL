@@ -70,6 +70,37 @@ func buildUsage(prompt, text string, responsesAPI bool) map[string]int {
 	}
 }
 
+// rejectUnsupported 检查客户端传了但我们兑现不了的字段。
+//
+// 只拦"静默忽略会让客户端拿到错误结果"的：n>1 少给候选、图片输入被丢掉会
+// 让模型答非所问。采样类参数（temperature/top_p/max_tokens/...）上游根本
+// 没有对应旋钮，收下忽略即可，报错反而会挡住正常客户端。
+func rejectUnsupported(req map[string]interface{}, messages []map[string]interface{}) error {
+	if n, ok := req["n"].(float64); ok && n > 1 {
+		return fmt.Errorf("n=%d not supported: upstream returns a single candidate", int(n))
+	}
+	for _, m := range messages {
+		parts, ok := m["content"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, c := range parts {
+			cm, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			switch getStr(cm, "type") {
+			case "image_url", "input_image":
+				return fmt.Errorf("image input not supported: upload works anonymously but " +
+					"referencing the file is rejected upstream (needs a signed-in session)")
+			case "input_audio":
+				return fmt.Errorf("audio input not supported")
+			}
+		}
+	}
+	return nil
+}
+
 func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{},
 	onDelta func(string)) (string, []ToolCall, *StreamResult, error) {
 	res, err := streamGenerate(prompt, mc, onDelta)
@@ -156,6 +187,12 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		if tm, ok := t.(map[string]interface{}); ok {
 			tools = append(tools, tm)
 		}
+	}
+
+	if err := rejectUnsupported(req, messages); err != nil {
+		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+			"message": err.Error(), "type": "invalid_request_error"}})
+		return
 	}
 
 	prompt := messagesToPrompt(messages, tools, req["tool_choice"])
@@ -376,6 +413,12 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		} else {
 			tools = append(tools, tm)
 		}
+	}
+
+	if err := rejectUnsupported(req, messages); err != nil {
+		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+			"message": err.Error(), "type": "invalid_request_error"}})
+		return
 	}
 
 	prompt := messagesToPrompt(messages, tools, req["tool_choice"])
