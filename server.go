@@ -52,8 +52,8 @@ func handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-func callGemini(prompt string, mc ModelConfig, thinkMode int, tools []map[string]interface{}) (string, []ToolCall, *StreamResult, error) {
-	res, err := streamGenerate(prompt, mc, thinkMode)
+func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{}) (string, []ToolCall, *StreamResult, error) {
+	res, err := streamGenerate(prompt, mc)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -117,7 +117,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if modelInput == "" {
 		modelInput = cfg.DefaultModel
 	}
-	modelName, modelCfg, thinkMode, err := resolveModel(modelInput)
+	modelName, modelCfg, err := resolveModel(modelInput)
 	if err != nil {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": err.Error()}})
 		return
@@ -145,7 +145,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, thinkMode, tools)
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools)
 	if err != nil {
 		recordRequest("chat.completions", modelName, prompt, "", nil, 502, err.Error(), false)
 		if rle, ok := err.(*RateLimitError); ok {
@@ -235,7 +235,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	if modelInput == "" {
 		modelInput = cfg.DefaultModel
 	}
-	modelName, modelCfg, thinkMode, err := resolveModel(modelInput)
+	modelName, modelCfg, err := resolveModel(modelInput)
 	if err != nil {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": err.Error()}})
 		return
@@ -343,7 +343,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, thinkMode, tools)
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools)
 	if err != nil {
 		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), false)
 		if rle, ok := err.(*RateLimitError); ok {

@@ -14,7 +14,7 @@ func TestModelHeader(t *testing.T) {
 		{"gemini-3.1-pro", hexPro31},
 	}
 	for _, c := range cases {
-		name, mc, think, err := resolveModel(c.name)
+		name, mc, err := resolveModel(c.name)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -27,15 +27,16 @@ func TestModelHeader(t *testing.T) {
 		if got != want {
 			t.Errorf("%s: header=%s want %s", c.name, got, want)
 		}
-		t.Logf("%-32s -> mode=%d think=%d header=%s", name, mc.Mode, think, got)
+		t.Logf("%-32s -> mode=%d header=%s", name, mc.Mode, got)
 	}
 
-	// @think=N 覆盖仍然有效
-	if _, _, th, _ := resolveModel("gemini-3.6-flash@think=2"); th != 2 {
-		t.Errorf("@think=2 -> %d", th)
+	// @think=N 是历史遗留的假参数，剥掉后忽略，不报错也不改变路由
+	name, mc, err := resolveModel("gemini-3.6-flash@think=2")
+	if err != nil || name != "gemini-3.6-flash" || mc.HexID != hexFlash36 {
+		t.Errorf("@think 后缀应被忽略, got name=%s hex=%s err=%v", name, mc.HexID, err)
 	}
 	// 未知模型仍然报错，不静默回落
-	if _, _, _, err := resolveModel("no-such-model"); err == nil {
+	if _, _, err := resolveModel("no-such-model"); err == nil {
 		t.Error("unknown model should error")
 	}
 }

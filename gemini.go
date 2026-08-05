@@ -21,47 +21,45 @@ const (
 	hexPro31     = "9d8ca3786ebdfbea" // 3.1 Pro
 )
 
-// ModelConfig holds the server-side model id plus legacy MODE_CATEGORY + think depth.
+// ModelConfig holds the server-side model id plus the legacy MODE_CATEGORY value.
 type ModelConfig struct {
 	// HexID 走 x-goog-ext-525001261-jspb header，是服务端唯一认的模型开关。
 	// 实测：不发这个 header 时 inner[79] 取 1..6 全部落到 3.5 Flash-Lite；
 	// header 写 3.6 而 inner[79] 写 6 时拿到的是 3.6 —— header 压过 inner[79]。
 	HexID string
 	Mode  int
-	Think int
 	Desc  string
 }
 
 var Models = map[string]ModelConfig{
-	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Think: 4, Desc: "Latest all-around model"},
-	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Think: 4, Desc: "Fastest, lightweight"},
-	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Think: 4, Desc: "Free accounts are downgraded to 3.6 Flash even when signed in"},
+	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
+	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
+	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Free accounts are downgraded to 3.6 Flash even when signed in"},
 
 	// 旧模型名保留为别名。服务端清单里只有上面三个，
 	// thinking / auto / thinking-lite 已无对应条目。
-	"gemini-3.5-flash":               {HexID: hexFlash36, Mode: 1, Think: 4, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-3.5-flash-thinking":      {HexID: hexFlash36, Mode: 1, Think: 0, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-3.5-flash-thinking-lite": {HexID: hexFlash36, Mode: 1, Think: 0, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-auto":                    {HexID: hexFlash36, Mode: 1, Think: 4, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-flash-lite":              {HexID: hexFlashLite, Mode: 6, Think: 4, Desc: "Alias of gemini-3.5-flash-lite"},
+	"gemini-3.5-flash":               {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-3.5-flash-thinking":      {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-3.5-flash-thinking-lite": {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-auto":                    {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
+	"gemini-flash-lite":              {HexID: hexFlashLite, Mode: 6, Desc: "Alias of gemini-3.5-flash-lite"},
 }
 
-// resolveModel parses "name@think=N" and returns base name, model config, think depth.
-func resolveModel(modelName string) (string, ModelConfig, int, error) {
-	thinkOverride := -1
+// resolveModel maps a model name to its config.
+//
+// "name@think=N" 后缀会被剥掉并忽略。旧版本把它写进 inner[17] 当思考深度，
+// 那是误读：抓包显示 inner[17] 是会话内的轮次索引（首轮 [[0]]，带会话 id 的
+// 第二轮 [[1]]，逐轮递增），跟思考深度无关。我们每次都开新会话，该值恒为 0。
+// 后缀不报错只忽略，避免打断已经配了这个写法的客户端。
+func resolveModel(modelName string) (string, ModelConfig, error) {
 	if idx := strings.Index(modelName, "@think="); idx >= 0 {
-		fmt.Sscanf(modelName[idx+len("@think="):], "%d", &thinkOverride)
 		modelName = modelName[:idx]
 	}
 	mc, ok := Models[modelName]
 	if !ok {
-		return "", ModelConfig{}, 0, fmt.Errorf("unknown model: %s", modelName)
+		return "", ModelConfig{}, fmt.Errorf("unknown model: %s", modelName)
 	}
-	think := mc.Think
-	if thinkOverride >= 0 {
-		think = thinkOverride
-	}
-	return modelName, mc, think, nil
+	return modelName, mc, nil
 }
 
 // StreamResult holds raw body + per-request proxy + timing info.
@@ -122,7 +120,7 @@ func releaseSlot(proxyID int64) {
 // streamGenerate POSTs to Gemini's StreamGenerate endpoint and returns raw body
 // plus proxy/timing telemetry for the metrics layer.
 // The 80-slot inner array is verbatim from the Python reference.
-func streamGenerate(prompt string, mc ModelConfig, thinkMode int) (*StreamResult, error) {
+func streamGenerate(prompt string, mc ModelConfig) (*StreamResult, error) {
 	inner := make([]interface{}, 80)
 	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
 	inner[1] = []interface{}{"en"}
@@ -131,7 +129,8 @@ func streamGenerate(prompt string, mc ModelConfig, thinkMode int) (*StreamResult
 	inner[7] = 1
 	inner[10] = 1
 	inner[11] = 0
-	inner[17] = []interface{}{[]interface{}{thinkMode}}
+	// 会话内轮次索引；我们每次都是新会话，恒为 0。
+	inner[17] = []interface{}{[]interface{}{0}}
 	inner[18] = 0
 	inner[27] = 1
 	inner[30] = []interface{}{4}
@@ -389,7 +388,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	inner[7] = 1
 	inner[10] = 1
 	inner[11] = 0
-	inner[17] = []interface{}{[]interface{}{4}}
+	inner[17] = []interface{}{[]interface{}{0}}
 	inner[18] = 0
 	inner[27] = 1
 	inner[30] = []interface{}{4}
