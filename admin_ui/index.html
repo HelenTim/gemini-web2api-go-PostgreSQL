@@ -7,125 +7,214 @@
 <!-- Chart.js 随二进制一起 embed，不走 CDN：内网/离线部署也要能开面板 -->
 <script src="/admin/chart.umd.min.js"></script>
 <style>
+  /* ── Gemini 设计语言 ────────────────────────────────────────────────────
+     取自 gemini.google.com 本体：Material 3 的暗色 surface 阶梯、大圆角、
+     pill 形导航项，以及品牌的蓝→紫→粉三色。三色只用在一个地方（IP 红线
+     进度条），其余保持安静。字体走系统栈——面板要能离线开，不引外部字体。 */
   :root {
-    --bg: #0f1419; --panel: #1a1f29; --border: #2a3140;
-    --text: #d8dde6; --muted: #8993a8; --accent: #4f9eff;
-    --green: #4ade80; --red: #f87171; --yellow: #fbbf24;
+    --g-blue: #4285F4;
+    --g-purple: #9B72CB;
+    --g-pink: #D96570;
+    --g-sweep: linear-gradient(90deg, #4285F4 0%, #9B72CB 55%, #D96570 100%);
+
+    --bg: #131314;
+    --surface: #1E1F20;
+    --surface-hi: #282A2C;
+    --surface-press: #333537;
+    --outline: #444746;
+    --outline-soft: #2D2F31;
+
+    --text: #E3E3E3;
+    --muted: #9AA0A6;
+    --ok: #81C995;
+    --fail: #F28B82;
+    --warn: #FDD663;
+
+    --r-card: 16px;
+    --r-pill: 999px;
+    --sans: "Google Sans", "Product Sans", -apple-system, BlinkMacSystemFont,
+            "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: "Roboto Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif;
-         background: var(--bg); color: var(--text); font-size: 14px; }
-  header { background: var(--panel); border-bottom: 1px solid var(--border);
-           padding: 12px 24px; display: flex; align-items: center;
-           justify-content: space-between; }
-  header h1 { font-size: 16px; font-weight: 600; color: var(--accent); }
-  nav { display: flex; gap: 8px; }
-  nav button { background: transparent; border: 1px solid var(--border); color: var(--text);
-               padding: 6px 14px; cursor: pointer; border-radius: 6px;
-               font-size: 13px; transition: all .15s; }
-  nav button:hover { border-color: var(--accent); color: var(--accent); }
-  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
-  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-             gap: 12px; margin-bottom: 20px; }
-  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-         padding: 14px 18px; }
-  .kpi .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
-                letter-spacing: 0.5px; margin-bottom: 6px; }
-  .kpi .value { font-size: 22px; font-weight: 600; color: var(--text); }
-  .kpi .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-           padding: 20px; margin-bottom: 20px; }
-  .panel h2 { font-size: 14px; margin-bottom: 14px; color: var(--text);
-              display: flex; justify-content: space-between; align-items: center; }
-  .panel h2 .controls { display: flex; gap: 8px; }
-  .panel h2 .controls button, .panel h2 .controls select {
-    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-    padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase;
-       background: rgba(0,0,0,0.15); }
-  tr:hover td { background: rgba(79, 158, 255, 0.04); }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
-  .badge.ok { background: rgba(74,222,128,0.15); color: var(--green); }
-  .badge.fail { background: rgba(248,113,113,0.15); color: var(--red); }
-  .badge.muted { background: rgba(137,147,168,0.15); color: var(--muted); }
-  .pre { font-family: "Consolas", "Menlo", monospace; font-size: 11.5px;
-         color: var(--muted); white-space: pre-wrap; max-width: 360px;
-         overflow: hidden; text-overflow: ellipsis; }
-  button.btn { background: var(--accent); color: #fff; border: none;
-               padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-  button.btn:hover { opacity: 0.9; }
-  button.btn.danger { background: var(--red); }
-  button.btn.muted { background: var(--border); color: var(--text); }
-  input, select { background: var(--bg); border: 1px solid var(--border);
-                  color: var(--text); padding: 6px 10px; border-radius: 4px; font-size: 13px; }
-  input:focus, select:focus { outline: 1px solid var(--accent); }
-  .login-box { max-width: 380px; margin: 100px auto; background: var(--panel);
-               border: 1px solid var(--border); border-radius: 8px; padding: 32px; }
-  .login-box h1 { color: var(--accent); margin-bottom: 20px; font-size: 20px; }
-  .login-box input { width: 100%; padding: 10px; margin-bottom: 12px; }
-  .login-box button { width: 100%; padding: 10px; }
-  .err { color: var(--red); font-size: 12px; margin-top: 8px; }
-  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  canvas { width: 100% !important; max-height: 320px; }
-  .empty { color: var(--muted); text-align: center; padding: 40px; font-size: 13px; }
-  .truncate { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  details summary { cursor: pointer; color: var(--accent); }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+  body {
+    font-family: var(--sans);
+    background: var(--bg); color: var(--text);
+    font-size: 14px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { display: flex; min-height: 100vh; }
 
-  /* 自定义弹窗 */
-  .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 9999; backdrop-filter: blur(2px);
-    animation: fade-in .15s ease-out;
+  /* ── 侧边栏 ─────────────────────────────────────────────────────────── */
+  .sidebar {
+    width: 256px; flex: 0 0 256px; padding: 18px 12px;
+    border-right: 1px solid var(--outline-soft);
+    display: flex; flex-direction: column; gap: 4px;
+    position: sticky; top: 0; height: 100vh;
   }
-  @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
-  .modal {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; min-width: 420px; max-width: 560px;
-    padding: 24px; box-shadow: 0 12px 48px rgba(0,0,0,0.6);
-    animation: pop-in .18s ease-out;
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px 18px; font-size: 17px; letter-spacing: -.01em;
   }
-  @keyframes pop-in { from { transform: scale(.96); opacity: 0 } to { transform: scale(1); opacity: 1 } }
-  .modal h3 { font-size: 15px; margin-bottom: 6px; color: var(--text); }
-  .modal .desc { color: var(--muted); font-size: 12.5px; margin-bottom: 18px; line-height: 1.5; }
-  .modal .field { margin-bottom: 14px; }
-  .modal .field label {
-    display: block; color: var(--muted); font-size: 11.5px;
-    margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.4px;
+  .brand .spark {
+    width: 22px; height: 22px; flex: none;
+    background: var(--g-sweep); border-radius: 4px;
+    clip-path: polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%);
   }
-  .modal .field input, .modal .field textarea {
-    width: 100%; padding: 9px 11px; font-size: 13px;
-    font-family: "Consolas", "Menlo", monospace;
+  .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+  .sidebar nav button {
+    all: unset; cursor: pointer; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-radius: var(--r-pill);
+    color: var(--muted); font-size: 14px; font-family: var(--sans);
+    transition: background .15s, color .15s;
   }
-  .modal .field .hint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
-  .modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px; }
-  .modal .actions button { padding: 8px 18px; font-size: 13px; }
-  .modal .err {
-    background: rgba(248,113,113,0.1); border-left: 3px solid var(--red);
-    padding: 8px 12px; color: var(--red); font-size: 12px; margin-bottom: 12px;
-    border-radius: 4px;
+  .sidebar nav button:hover { background: var(--surface-hi); color: var(--text); }
+  .sidebar nav button.active { background: #0B57D0; color: #fff; }
+  .sidebar nav button:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
+  .side-foot { margin-top: auto; padding: 12px 16px; color: var(--muted); font-size: 12px; }
+
+  main { flex: 1; padding: 28px 32px 64px; max-width: 1320px; min-width: 0; }
+  h2 {
+    font-size: 15px; font-weight: 500; letter-spacing: .01em;
+    margin-bottom: 14px; display: flex; align-items: center;
+    justify-content: space-between; gap: 12px;
   }
 
-.rtrow { display: grid; grid-template-columns: 150px 200px 1fr; gap: 10px;
-         align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
-.rtrow:last-child { border-bottom: none; }
-.rtrow label { color: var(--fg); font-size: 13px; }
-.rtrow input[type=text], .rtrow input[type=number], .rtrow select {
-  width: 100%; padding: 5px 8px; background: var(--bg2); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 5px; font-size: 13px; }
-.rtrow input[type=checkbox] { width: 16px; height: 16px; }
-.rthint { color: var(--muted); font-size: 12px; }
-@media (max-width: 760px) { .rtrow { grid-template-columns: 1fr; gap: 4px; } }
+  /* ── 卡片 ───────────────────────────────────────────────────────────── */
+  .panel, .card {
+    background: var(--surface); border: 1px solid var(--outline-soft);
+    border-radius: var(--r-card); padding: 20px 22px; margin-bottom: 16px;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-2 > .panel, .grid-2 > .card { margin-bottom: 0; }
+
+  /* ── KPI ────────────────────────────────────────────────────────────── */
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .kpi { background: var(--surface); border: 1px solid var(--outline-soft);
+         border-radius: var(--r-card); padding: 16px 18px; }
+  .kpi .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .kpi .value { font-size: 26px; font-weight: 400; letter-spacing: -.02em; }
+  .kpi .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+
+  /* ── 表格 ───────────────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
+       padding: 8px 10px; border-bottom: 1px solid var(--outline-soft); }
+  td { padding: 10px; border-bottom: 1px solid var(--outline-soft); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,.025); }
+  .empty { text-align: center; color: var(--muted); padding: 28px 0; }
+
+  /* ── 按钮 ───────────────────────────────────────────────────────────── */
+  .btn, .controls button, button.btn {
+    all: unset; cursor: pointer; font-family: var(--sans); font-size: 13px;
+    padding: 8px 18px; border-radius: var(--r-pill);
+    background: #0B57D0; color: #fff; transition: filter .15s, background .15s;
+  }
+  .btn:hover { filter: brightness(1.12); }
+  .btn:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
+  .btn.muted { background: var(--surface-hi); color: var(--text); }
+  .btn.muted:hover { background: var(--surface-press); }
+  .btn.danger { background: transparent; color: var(--fail); box-shadow: inset 0 0 0 1px var(--outline); }
+  .btn.danger:hover { background: rgba(242,139,130,.12); }
+  .controls { display: flex; gap: 8px; align-items: center; }
+  .controls button { background: var(--surface-hi); color: var(--text); padding: 6px 14px; }
+  .controls button:hover { background: var(--surface-press); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  select, input[type=text], input[type=password], input[type=number], textarea {
+    font-family: var(--sans); font-size: 13px; color: var(--text);
+    background: var(--surface-hi); border: 1px solid var(--outline);
+    border-radius: 10px; padding: 8px 12px; outline: none;
+  }
+  select:focus, input:focus, textarea:focus { border-color: var(--g-blue); }
+
+  /* ── 徽标 ───────────────────────────────────────────────────────────── */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: var(--r-pill);
+           font-size: 11.5px; background: var(--surface-hi); color: var(--muted); }
+  .badge.ok { background: rgba(129,201,149,.16); color: var(--ok); }
+  .badge.fail { background: rgba(242,139,130,.16); color: var(--fail); }
+  .badge.muted { background: var(--surface-hi); color: var(--muted); }
+
+  .pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+         word-break: break-all; }
+  code { font-family: var(--mono); font-size: 12px; background: var(--surface-hi);
+         padding: 1px 6px; border-radius: 5px; }
+  .muted { color: var(--muted); }
+  .truncate { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint, .desc { color: var(--muted); font-size: 12.5px; }
+  .err { color: var(--fail); font-size: 13px; margin-top: 10px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .field { margin-bottom: 14px; }
+  .field .label { display: block; margin-bottom: 6px; font-size: 13px; }
+
+  /* ── 运行时配置表单 ─────────────────────────────────────────────────── */
+  .rtrow { display: grid; grid-template-columns: 160px 210px 1fr; gap: 12px;
+           align-items: center; padding: 9px 0; border-bottom: 1px solid var(--outline-soft); }
+  .rtrow:last-child { border-bottom: none; }
+  .rtrow label { font-size: 13px; }
+  .rtrow input[type=text], .rtrow input[type=number], .rtrow select { width: 100%; }
+  .rtrow input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--g-blue); }
+  .rthint { color: var(--muted); font-size: 12px; }
+
+  /* ── signature：IP slot 距离封禁红线还有多远 ────────────────────────────
+     实测单 IP 约 85 次请求后被 Google 重定向到 sorry 页（干净连接 82-88）。
+     这个数字是本项目独有的知识，也是部署时唯一真正要盯的东西——比请求量和
+     延迟重要得多。所以把它做成面板的主角：一条按 Gemini 三色渐变推进的轨道，
+     越接近红线颜色越往粉红走。 */
+  .slot { padding: 14px 0; border-bottom: 1px solid var(--outline-soft); }
+  .slot:last-child { border-bottom: none; }
+  .slot-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .slot-name { font-size: 13.5px; }
+  .slot-count { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .slot-count b { color: var(--text); font-size: 15px; font-weight: 500; }
+  .track { position: relative; height: 6px; border-radius: var(--r-pill);
+           background: var(--surface-hi); margin-top: 10px; overflow: hidden; }
+  .track .fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--r-pill);
+                 background: var(--g-sweep); background-size: 340px 100%;
+                 transition: width .45s cubic-bezier(.2,0,0,1); }
+  .redline { position: absolute; top: -3px; bottom: -3px; width: 2px;
+             background: var(--fail); opacity: .85; }
+  .slot-note { margin-top: 7px; font-size: 12px; color: var(--muted); }
+  .slot-note.warn { color: var(--warn); }
+  .slot-note.danger { color: var(--fail); }
+
+  /* ── 登录 ───────────────────────────────────────────────────────────── */
+  .login-box { max-width: 380px; margin: 18vh auto; background: var(--surface);
+               border: 1px solid var(--outline-soft); border-radius: 24px; padding: 32px; }
+  .login-box h1 { font-size: 19px; font-weight: 400; margin-bottom: 20px;
+                  display: flex; align-items: center; gap: 10px; }
+  .login-box input { width: 100%; margin-bottom: 14px; padding: 11px 14px; }
+  .login-box .btn { width: 100%; text-align: center; }
+
+  /* ── 弹窗 ───────────────────────────────────────────────────────────── */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6);
+                   display: flex; align-items: center; justify-content: center; z-index: 50; }
+  .modal { background: var(--surface); border: 1px solid var(--outline-soft);
+           border-radius: 24px; padding: 26px; width: min(460px, 92vw); }
+  .modal h3 { font-size: 17px; font-weight: 400; margin-bottom: 8px; }
+
+  @media (max-width: 900px) {
+    #app { flex-direction: column; }
+    .sidebar { width: 100%; flex: none; height: auto; position: static;
+               border-right: none; border-bottom: 1px solid var(--outline-soft); }
+    .sidebar nav { flex-direction: row; overflow-x: auto; }
+    .side-foot { display: none; }
+    main { padding: 20px 16px 48px; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .rtrow { grid-template-columns: 1fr; gap: 5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script>
+// 实测单出口 IP 的封禁红线：约 85 次请求（干净连接 82-88，n=8）
+const BAN_LINE = 85;
+
 const api = async (path, opts = {}) => {
   const r = await fetch(path, { credentials: 'include', ...opts,
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } });
@@ -185,43 +274,41 @@ const pages = {
         <div id="testResult" style="display:none;"></div>
       </div>
       <div class="panel">
-        <h2>IP 限流用量
+        <h2>距离封禁红线
           <span class="controls"><button onclick="switchPage('dashboard')">刷新</button></span>
         </h2>
-        <p style="color: var(--muted); font-size: 12px; margin-bottom: 10px;">
-          每个 IP slot（直连或单个代理）独立计数。当前限额：并发 ${(usage.items[0]||{}).limit_concurrent || '-'} / RPM ${(usage.items[0]||{}).limit_rpm || '-'} / RPH ${(usage.items[0]||{}).limit_rph || '-'}
+        <p class="hint" style="margin-bottom:16px">
+          实测单个出口 IP 约 <b style="color:var(--text)">85 次请求</b>后会被 Google 重定向到
+          <code>sorry/index</code>（干净连接下 82-88，n=8）。下面按每个 slot 的 1 小时用量对这条线画进度，
+          红竖线是本地 RPH 限额的位置——它挡在红线前面，超了直接返回 429 而不去消耗 Google 配额。
         </p>
-        <div style="background: rgba(251,191,36,0.08); border-left: 3px solid var(--yellow); padding: 10px 14px; margin-bottom: 14px; font-size: 12.5px; line-height: 1.6; color: var(--text);">
-          <b style="color: var(--yellow);">⚠ 为什么要限流</b><br>
-          实测单 IP 累积约 100 次请求会被 Google 重定向到 <code>google.com/sorry/index</code>，
-          所有后续请求 6-24 小时内全部失败，只能等待或换 IP 才能恢复。<br>
-          本地限流主动拦下超量请求 → 返回 <b>HTTP 429</b>（不消耗 Google 配额），
-          请求被推迟到 slot 有空位再发。<br><br>
-          <b>每个 IP slot 独立计数：</b>直连 = 主机 IP 一个 slot；每个代理一个 slot。
-          <b>配越多代理 → 总容量线性放大</b>（5 代理 = 5 倍并发/RPM/RPH 总容量）。<br>
-          配置代理在「代理池」页面，限额改 <code>config.json</code> 的
-          <code>per_ip_concurrent</code> / <code>per_ip_rpm</code> / <code>per_ip_rph</code> 后重启即可。
-        </div>
-        <table>
-          <thead><tr><th>IP slot</th><th>并发</th><th>RPM</th><th>RPH</th><th>占用率（最严的那项）</th></tr></thead>
-          <tbody>${(usage.items || []).map(u => {
-            const cc = u.limit_concurrent ? u.inflight / u.limit_concurrent : 0;
-            const cm = u.limit_rpm ? u.rpm / u.limit_rpm : 0;
-            const ch = u.limit_rph ? u.rph / u.limit_rph : 0;
-            const top = Math.max(cc, cm, ch);
-            const cls = top >= 0.9 ? 'fail' : top >= 0.6 ? 'muted' : 'ok';
-            const label = top >= 0.9 ? '接近上限' : top >= 0.6 ? '使用中' : '空闲';
-            return `<tr>
-              <td><b>${u.name}</b></td>
-              <td>${u.inflight} / ${u.limit_concurrent || '∞'}</td>
-              <td>${u.rpm} / ${u.limit_rpm || '∞'}</td>
-              <td>${u.rph} / ${u.limit_rph || '∞'}</td>
-              <td><span class="badge ${cls}">${(top*100).toFixed(0)}% · ${label}</span></td>
-            </tr>`;
-          }).join('') || '<tr><td colspan="5" class="empty">还没有任何请求经过</td></tr>'}
-          </tbody>
-        </table>
+        ${(usage.items || []).map(u => {
+          const rph = u.rph || 0;
+          const limit = u.limit_rph || 0;
+          const pct = Math.min(rph / BAN_LINE * 100, 100);
+          const limitPct = limit ? Math.min(limit / BAN_LINE * 100, 100) : null;
+          const left = Math.max(BAN_LINE - rph, 0);
+          let noteCls = '', note = `按当前用量还能再打约 ${left} 次`;
+          if (rph >= BAN_LINE) { noteCls = 'danger'; note = '已越过实测红线，该出口随时可能被拦'; }
+          else if (rph >= BAN_LINE * 0.75) { noteCls = 'warn'; note = `接近红线，只剩约 ${left} 次`; }
+          else if (rph === 0) { note = '本小时还没有请求'; }
+          return `<div class="slot">
+            <div class="slot-head">
+              <span class="slot-name">${escapeHtml(u.name)}</span>
+              <span class="slot-count"><b>${rph}</b> / ${BAN_LINE} 次·小时</span>
+            </div>
+            <div class="track">
+              <div class="fill" style="width:${pct}%"></div>
+              ${limitPct !== null ? `<div class="redline" style="left:${limitPct}%"
+                title="本地 RPH 限额 ${limit}"></div>` : ''}
+            </div>
+            <div class="slot-note ${noteCls}">${note}
+              · 并发 ${u.inflight}/${u.limit_concurrent || '∞'}
+              · RPM ${u.rpm}/${u.limit_rpm || '∞'}</div>
+          </div>`;
+        }).join('') || '<div class="empty">还没有任何请求经过</div>'}
       </div>
+
       <div class="grid-2">
         <div class="panel">
           <h2>按模型分组</h2>
@@ -973,15 +1060,20 @@ async function switchPage(name) {
 
 function renderShell() {
   document.getElementById('app').innerHTML = `
-    <header>
-      <h1>gemini-web2api 管理面板</h1>
+    <aside class="sidebar">
+      <div class="brand"><span class="spark"></span>gemini-web2api</div>
       <nav>
-        <button data-page="dashboard" onclick="switchPage('dashboard')">仪表盘</button>
+        <button data-page="dashboard" onclick="switchPage('dashboard')">概览</button>
         <button data-page="requests" onclick="switchPage('requests')">请求记录</button>
         <button data-page="proxies" onclick="switchPage('proxies')">代理池</button>
         <button data-page="settings" onclick="switchPage('settings')">设置</button>
       </nav>
-    </header>
+      <div class="side-foot">
+        <div id="sideStat">—</div>
+        <div style="margin-top:8px"><a href="#" onclick="doLogout();return false"
+          style="color:var(--muted)">退出登录</a></div>
+      </div>
+    </aside>
     <main id="main"></main>
   `;
   switchPage('dashboard');
@@ -990,7 +1082,10 @@ function renderShell() {
 function renderLogin() {
   document.getElementById('app').innerHTML = `
     <div class="login-box">
-      <h1>gemini-web2api 管理面板</h1>
+      <h1><span class="spark" style="width:20px;height:20px;background:var(--g-sweep);
+        border-radius:4px;display:inline-block;
+        clip-path:polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%)"></span>
+        gemini-web2api</h1>
       <input id="tokenInput" type="password" placeholder="管理员 Token" />
       <button class="btn" onclick="doLogin()">登录</button>
       <div id="loginErr" class="err"></div>
