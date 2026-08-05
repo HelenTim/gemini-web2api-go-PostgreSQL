@@ -89,8 +89,15 @@ func getTLSClient() tls_client.HttpClient {
 // 1. stdlib 的 http.ProxyURL 原生支持 socks5:// / socks5h:// / http:// / https://，
 //    跟 Kiro-Gogogo 项目同款实现，已知能过我们手头的代理。
 // 2. tls-client 自带的 SOCKS 实现在某些代理端会 EOF（已实测）。
-// 3. 走代理时 Google 看到的"客户端指纹"实际是代理出口节点的 TLS 握手,
-//    我们这边伪不伪装意义不大;但应用层 header 还是按 Chrome 146 模拟。
+//
+// 代价要写清楚：走代理时 Google 看到的是**我们自己的 TLS 指纹**，即 Go 标准库的，
+// 不是 Chrome 146 的。HTTP CONNECT 只建隧道，TLS 是我们跟目标端到端握的。
+// JA3 回显实测：stdlib 直连和过代理是同一个 JA3（03117a8e…），而同一个代理下换成
+// tls-client 就变成另一个（2d25c563…）——两条判据都说明代理不介入 TLS。
+//
+// 但这不构成换回 tls-client 的理由：同时起跑的对照里 tls-client Chrome_146 打到
+// 111 次被拦、Go stdlib 103 次，差 8 次；而同配置换个出口的方差能到 36%
+// （151 vs 111）。指纹差异真实存在，对封禁阈值没有可观测影响。
 //
 // 不走代理时仍然用 getTLSClient（保留 utls/chrome146 真指纹优势）。
 
