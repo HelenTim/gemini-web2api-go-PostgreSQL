@@ -120,14 +120,10 @@ Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=
 `gemini-3.5-flash-thinking-lite`、`gemini-auto`、`gemini-flash-lite`。服务端
 清单里已经没有 thinking / auto 这些条目了。
 
-模型名后加 `@think=N` 可覆盖思考深度（`0` 最深 ↔ `4` 最浅）：
-
-```
-gemini-3.6-flash@think=2
-```
-
-> `@think=N` 写进请求的 `inner[17]`。该字段现在还有没有效果**未经证实**——
-> 对照实验的样本量不足以区分 `think=0` 和 `think=4` 的输出差异。
+> **`@think=N` 已废弃。** 该后缀写进请求的 `inner[17]`，一直被当作"思考深度"，
+> 但抓包证明它是**会话内的轮次索引**（首轮 `[[0]]`，带会话 id 的第二轮 `[[1]]`，
+> 逐轮递增），跟思考深度无关。我们每次都开新会话，该值恒为 0，所以这个参数
+> 从来没有生效过。后缀仍被接受但直接忽略，不影响路由。
 
 ### 已知的能力边界
 
@@ -137,8 +133,16 @@ gemini-3.6-flash@think=2
 Flash，付费订阅未验证。
 
 **多轮上下文是靠把 `messages` 拼成单个 prompt 实现的，不是协议级多轮。**
-Gemini 的会话 id（`c_*` / `r_*` / `rc_*`）在这条路径上会被服务端拒绝，所以
-拼 prompt 是唯一可行方式，别改。
+
+Gemini 网页端本身支持协议级多轮（浏览器发第二句时只传新消息 + 会话 id，历史
+由服务端保存），匿名会话也支持。但复现不了：按浏览器的确切格式传
+`inner[2] = [cid, 上轮rid, "", …, token]`、`inner[17] = [[轮次]]`、URL 带
+`f.sid`，全部对齐后服务端仍然拒绝。唯一没能复现的是 `inner[3]` 的 botguard
+token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 运行时生成，
+纯 HTTP 客户端造不出来。
+
+所以拼 prompt 是目前唯一可行的方式。代价是每轮重发全部历史，且受单次输入
+长度上限约束。
 
 ## 配置
 
@@ -225,8 +229,8 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 | `POST /v1/chat/completions` | ✅ | 支持 `stream: true`，但是先取完整回复再切成 SSE 块，不是增量流式 |
 | `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用） |
 | `GET /v1/models` | ✅ | 3 个真模型 + 5 个旧名别名 |
-| Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。模型偶尔不按格式返回 |
-| Vision / 图片输入 | ❌ | 未实现。网页协议本身支持（`push.clients6.google.com/upload/` 两步 resumable），但需要登录态 |
+| Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。实测 5 种工具中 3 种正常输出 tool_call；**查私有数据/内部系统类可靠**，但 Gemini 自己能做的（如查天气）会被它直接回答，有副作用的动作（如发邮件）会被拒绝 |
+| Vision / 图片输入 | ❌ | 未实现，且匿名走不通。匿名**能**上传（`content-push.googleapis.com/upload/` 两步 resumable，返回 `/contrib_service/ttl_1d/…`），但对话引用该文件被服务端拒绝（`BardErrorInfo 1100`）。需要登录态 |
 | Audio | ❌ | 未实现。网页端有音乐生成（Lyria 3），需要登录态 |
 
 ## 项目结构
