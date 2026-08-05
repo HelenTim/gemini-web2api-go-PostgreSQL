@@ -115,10 +115,10 @@ Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=
 | `gemini-3.5-flash-lite` | 极速、轻量 |
 | `gemini-3.1-pro` | 免费账号拿不到，见下 |
 
-以下旧名保留为别名，都指向 `gemini-3.6-flash`（`gemini-flash-lite` 指向
-`gemini-3.5-flash-lite`）：`gemini-3.5-flash`、`gemini-3.5-flash-thinking`、
-`gemini-3.5-flash-thinking-lite`、`gemini-auto`、`gemini-flash-lite`。服务端
-清单里已经没有 thinking / auto 这些条目了。
+只暴露这三个。旧的 `gemini-3.5-flash`、`gemini-3.5-flash-thinking`、
+`gemini-3.5-flash-thinking-lite`、`gemini-auto`、`gemini-flash-lite` **已移除**
+（传了会返回 400）——它们在服务端没有对应条目，留着只会让人以为有五种不同
+的模型可选。
 
 > **`@think=N` 已废弃。** 该后缀写进请求的 `inner[17]`，一直被当作"思考深度"，
 > 但抓包证明它是**会话内的轮次索引**（首轮 `[[0]]`，带会话 id 的第二轮 `[[1]]`，
@@ -228,7 +228,7 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 |---|---|---|
 | `POST /v1/chat/completions` | ✅ | 真流式：上游每出一帧就转发增量（实测 400 字中文回答产生 40 个 chunk）。chunk 序列为 `delta{role}` → `delta{content}`×N → 空 `delta`+`finish_reason` → `[DONE]`。**带 `tools` 时退化为收完再发**——tool_call 块要完整文本才能解析 |
 | `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用）。**未做真流式**，仍是收完再按事件序列发 |
-| `GET /v1/models` | ✅ | 3 个真模型 + 5 个旧名别名 |
+| `GET /v1/models` | ✅ | 3 个模型 |
 | Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。**查私有数据/内部系统类可靠**，但 Gemini 自己能做的（如查天气）会被它直接回答，有副作用的动作（如发邮件）会被拒绝 |
 | `tool_choice` | ⚠️ | `none` 完全不注入工具定义；`required` 和指定函数会加强制措辞、并把其余工具从 prompt 裁掉。但 prompt 级实现**无法真正强制**——实测模型自己答得上来的问题（天气、2+2）即使 `required` 也照样直接作答 |
 | `stream_options.include_usage` | ✅ | 在 `finish_reason` 之后补一个 `choices` 为空的 usage chunk |

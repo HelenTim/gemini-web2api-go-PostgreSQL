@@ -33,18 +33,14 @@ type ModelConfig struct {
 	Desc  string
 }
 
+// 只暴露服务端清单（batchexecute?rpcids=otAQ7b）里真实存在的模型。
+// 旧的 gemini-3.5-flash / -thinking / -thinking-lite / gemini-auto /
+// gemini-flash-lite 别名已移除：它们在服务端没有对应条目，留着只会让人
+// 以为有五种不同的模型可选。
 var Models = map[string]ModelConfig{
 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
 	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Free accounts are downgraded to 3.6 Flash even when signed in"},
-
-	// 旧模型名保留为别名。服务端清单里只有上面三个，
-	// thinking / auto / thinking-lite 已无对应条目。
-	"gemini-3.5-flash":               {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-3.5-flash-thinking":      {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-3.5-flash-thinking-lite": {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-auto":                    {HexID: hexFlash36, Mode: 1, Desc: "Alias of gemini-3.6-flash"},
-	"gemini-flash-lite":              {HexID: hexFlashLite, Mode: 6, Desc: "Alias of gemini-3.5-flash-lite"},
 }
 
 // resolveModel maps a model name to its config.

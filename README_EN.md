@@ -115,10 +115,10 @@ Gemini's backend only recognises three models (list comes from
 | `gemini-3.5-flash-lite` | Fastest, lightweight |
 | `gemini-3.1-pro` | Not reachable on free accounts, see below |
 
-These legacy names are kept as aliases of `gemini-3.6-flash` (`gemini-flash-lite`
-maps to `gemini-3.5-flash-lite`): `gemini-3.5-flash`, `gemini-3.5-flash-thinking`,
-`gemini-3.5-flash-thinking-lite`, `gemini-auto`, `gemini-flash-lite`. The backend
-list no longer has thinking / auto entries.
+These three are the only ones exposed. The legacy names `gemini-3.5-flash`,
+`gemini-3.5-flash-thinking`, `gemini-3.5-flash-thinking-lite`, `gemini-auto` and
+`gemini-flash-lite` have been **removed** (they now return 400) — the backend has
+no entries for them, and keeping them only suggested five distinct models exist.
 
 > **`@think=N` is deprecated.** The suffix went into `inner[17]` and was treated
 > as "thinking depth", but packet captures show it is the **turn index within a
@@ -235,7 +235,7 @@ Proxied connections use stdlib `net/http` + `http.ProxyURL` (best compatibility)
 |---|---|---|
 | `POST /v1/chat/completions` | ✅ | Real streaming — each upstream frame is diffed and forwarded as it arrives (400-char Chinese answer produced 40 chunks). Sequence: `delta{role}` → `delta{content}`×N → empty `delta` + `finish_reason` → `[DONE]`. **Falls back to buffered when `tools` are present** — tool_call blocks need the complete text to parse |
 | `POST /v1/responses` | ✅ | OpenAI Responses API (used by Codex CLI). **Not incrementally streamed** — still buffered, then emitted as the event sequence |
-| `GET /v1/models` | ✅ | 3 real models + 5 legacy aliases |
+| `GET /v1/models` | ✅ | 3 models |
 | Function calling | ⚠️ | Prompt-level implementation (model emits ` ```tool_call``` ` blocks parsed via regex), not a true protocol layer. **Reliable for private-data / internal-system lookups**, but anything Gemini can answer itself (weather) gets answered directly, and side-effecting actions (sending email) are refused |
 | `tool_choice` | ⚠️ | `none` skips tool definitions entirely; `required` and a named function add a mandatory instruction and drop the other tools from the prompt. A prompt-level layer **cannot truly force it** — in testing, questions the model can answer itself (weather, 2+2) were answered directly even under `required` |
 | `stream_options.include_usage` | ✅ | Emits a usage chunk with an empty `choices` array after `finish_reason` |

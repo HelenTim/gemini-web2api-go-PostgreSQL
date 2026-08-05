@@ -9,11 +9,7 @@ import (
 func TestModelHeader(t *testing.T) {
 	cases := []struct{ name, wantHex string }{
 		{"gemini-3.6-flash", hexFlash36},
-		{"gemini-3.5-flash", hexFlash36},
-		{"gemini-auto", hexFlash36},
-		{"gemini-3.5-flash-thinking", hexFlash36},
 		{"gemini-3.5-flash-lite", hexFlashLite},
-		{"gemini-flash-lite", hexFlashLite},
 		{"gemini-3.1-pro", hexPro31},
 	}
 	for _, c := range cases {
@@ -41,6 +37,16 @@ func TestModelHeader(t *testing.T) {
 	// 未知模型仍然报错，不静默回落
 	if _, _, err := resolveModel("no-such-model"); err == nil {
 		t.Error("unknown model should error")
+	}
+	// 已移除的旧别名必须明确报错，不能悄悄回落到 3.6 Flash
+	for _, gone := range []string{"gemini-3.5-flash", "gemini-3.5-flash-thinking",
+		"gemini-3.5-flash-thinking-lite", "gemini-auto", "gemini-flash-lite"} {
+		if _, _, err := resolveModel(gone); err == nil {
+			t.Errorf("已移除的别名 %s 应该报错", gone)
+		}
+	}
+	if len(Models) != 3 {
+		t.Errorf("只应暴露 3 个真模型, got %d", len(Models))
 	}
 }
 
