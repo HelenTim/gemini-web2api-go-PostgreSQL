@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -64,6 +66,8 @@ func resolveModel(modelName string) (string, ModelConfig, error) {
 
 // StreamResult holds raw body + per-request proxy + timing info.
 type StreamResult struct {
+	// Emitted 是流式模式下已经通过 onDelta 发出去的文本；非流式为空。
+	Emitted   string
 	Raw       string
 	ProxyID   int64
 	ProxyName string
@@ -74,8 +78,8 @@ type StreamResult struct {
 // RateLimitError 表示所有 IP slot 都达到了限流上限。
 // HTTP handler 看到这个错时返回 429 给客户端。
 type RateLimitError struct {
-	Reason   string // "concurrent" / "rpm" / "rph"
-	ProxyID  int64  // 0 = 直连 slot 满
+	Reason  string // "concurrent" / "rpm" / "rph"
+	ProxyID int64  // 0 = 直连 slot 满
 }
 
 func (e *RateLimitError) Error() string {
@@ -120,7 +124,10 @@ func releaseSlot(proxyID int64) {
 // streamGenerate POSTs to Gemini's StreamGenerate endpoint and returns raw body
 // plus proxy/timing telemetry for the metrics layer.
 // The 80-slot inner array is verbatim from the Python reference.
-func streamGenerate(prompt string, mc ModelConfig) (*StreamResult, error) {
+// onDelta 非 nil 时开启真流式：上游每写一帧就解析一次，跟已发出的内容做前缀
+// diff，把新增部分立刻回调出去。上游每帧带的是累积全文而不是增量，diff 必须
+// 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
+func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*StreamResult, error) {
 	inner := make([]interface{}, 80)
 	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
 	inner[1] = []interface{}{"en"}
@@ -179,13 +186,32 @@ func streamGenerate(prompt string, mc ModelConfig) (*StreamResult, error) {
 	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
 	var lastErr error
 	t0 := time.Now()
+
+	emitted := ""
+	var lineCB func(string)
+	if onDelta != nil {
+		lineCB = func(line string) {
+			for _, t := range textsInLine(line) {
+				cleaned := cleanGeminiText(t)
+				if len(cleaned) > len(emitted) && strings.HasPrefix(cleaned, emitted) {
+					onDelta(cleaned[len(emitted):])
+					emitted = cleaned
+				}
+			}
+		}
+	}
+
 	for attempt := 0; attempt < cfg.RetryAttempts; attempt++ {
 		sendT := time.Now()
-		statusCode, raw, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL)
+		statusCode, raw, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
 		if err != nil {
 			lastErr = err
 			if pickedOK {
 				recordProxyResult(picked.ID, false, err.Error())
+			}
+			// 已经往客户端吐过内容就不能重试，否则会重复。
+			if emitted != "" {
+				break
 			}
 			if attempt < cfg.RetryAttempts-1 {
 				logf("retry %d/%d: %v", attempt+1, cfg.RetryAttempts, err)
@@ -199,6 +225,9 @@ func streamGenerate(prompt string, mc ModelConfig) (*StreamResult, error) {
 			if pickedOK {
 				recordProxyResult(picked.ID, false, lastErr.Error())
 			}
+			if emitted != "" {
+				break
+			}
 			if attempt < cfg.RetryAttempts-1 {
 				time.Sleep(time.Duration(cfg.RetryDelaySec) * time.Second)
 			}
@@ -208,6 +237,7 @@ func streamGenerate(prompt string, mc ModelConfig) (*StreamResult, error) {
 			recordProxyResult(picked.ID, true, "")
 		}
 		return &StreamResult{
+			Emitted:   emitted,
 			Raw:       string(raw),
 			ProxyID:   picked.ID,
 			ProxyName: picked.Name,
@@ -222,13 +252,13 @@ func streamGenerate(prompt string, mc ModelConfig) (*StreamResult, error) {
 // hexID 决定服务端用哪个模型；留空则服务端一律回落到 3.5 Flash-Lite。
 func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 	h := map[string]string{
-		"Accept":            "*/*",
-		"Accept-Language":   "en-US,en;q=0.9",
-		"Content-Type":      "application/x-www-form-urlencoded;charset=UTF-8",
-		"Origin":            "https://gemini.google.com",
-		"Referer":           "https://gemini.google.com/app",
-		"X-Same-Domain":     "1",
-		"X-Goog-AuthUser":   "0",
+		"Accept":          "*/*",
+		"Accept-Language": "en-US,en;q=0.9",
+		"Content-Type":    "application/x-www-form-urlencoded;charset=UTF-8",
+		"Origin":          "https://gemini.google.com",
+		"Referer":         "https://gemini.google.com/app",
+		"X-Same-Domain":   "1",
+		"X-Goog-AuthUser": "0",
 	}
 	if hexID != "" {
 		h["x-goog-ext-525001261-jspb"] = fmt.Sprintf(`[1,null,null,null,"%s"]`, hexID)
@@ -244,7 +274,8 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 
 // doGeminiRequest 发一次请求到 endpoint。proxyURL 非空走 stdlib（支持 socks5/http），
 // 空走 tls-client（chrome146 真指纹）。返回 (HTTP status, body bytes, err)。
-func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string) (int, []byte, error) {
+func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
+	onLine func(string)) (int, []byte, error) {
 	if proxyURL != "" {
 		// 走 stdlib —— 跟 Kiro-Gogogo 同款 http.ProxyURL 实现，已知能过 socks5/socks5h。
 		req, err := http.NewRequest("POST", endpoint, strings.NewReader(body))
@@ -261,7 +292,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 			return 0, nil, err
 		}
 		defer resp.Body.Close()
-		raw, err := io.ReadAll(resp.Body)
+		raw, err := readBody(resp.Body, onLine)
 		if err != nil {
 			return resp.StatusCode, nil, err
 		}
@@ -282,11 +313,75 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := readBody(resp.Body, onLine)
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
 	return resp.StatusCode, raw, nil
+}
+
+// readBody 读完整个响应体并原样返回；onLine 非 nil 时每读到一行就回调一次，
+// 让上层能在上游还没写完时就往客户端转发。
+func readBody(r io.Reader, onLine func(string)) ([]byte, error) {
+	if onLine == nil {
+		return io.ReadAll(r)
+	}
+	var buf bytes.Buffer
+	sc := bufio.NewScanner(io.TeeReader(r, &buf))
+	// 单帧可能很大（实测见过 40 万字节的响应），默认 64KB 上限不够。
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		onLine(sc.Text())
+	}
+	if err := sc.Err(); err != nil {
+		return buf.Bytes(), err
+	}
+	return buf.Bytes(), nil
+}
+
+// textsInLine 从单个 wrb.fr 行里取出候选回复文本。
+// 上游每帧带的是**累积全文**而不是增量，所以流式转发时要自己做前缀 diff。
+func textsInLine(line string) []string {
+	if !strings.Contains(line, `"wrb.fr"`) || len(line) < 200 {
+		return nil
+	}
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(line), &arr); err != nil || len(arr) == 0 {
+		return nil
+	}
+	first, ok := arr[0].([]interface{})
+	if !ok || len(first) < 3 {
+		return nil
+	}
+	innerStr, ok := first[2].(string)
+	if !ok || len(innerStr) < 50 {
+		return nil
+	}
+	var inner []interface{}
+	if err := json.Unmarshal([]byte(innerStr), &inner); err != nil || len(inner) <= 4 {
+		return nil
+	}
+	parts, ok := inner[4].([]interface{})
+	if !ok {
+		return nil
+	}
+	var texts []string
+	for _, p := range parts {
+		pl, ok := p.([]interface{})
+		if !ok || len(pl) < 2 {
+			continue
+		}
+		tl, ok := pl[1].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, t := range tl {
+			if s, ok := t.(string); ok && s != "" {
+				texts = append(texts, s)
+			}
+		}
+	}
+	return texts
 }
 
 // extractResponseText parses StreamGenerate's wrb.fr stream and returns the
@@ -294,50 +389,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 func extractResponseText(raw string) string {
 	var texts []string
 	for _, line := range strings.Split(raw, "\n") {
-		if !strings.Contains(line, `"wrb.fr"`) || len(line) < 200 {
-			continue
-		}
-		var arr []interface{}
-		if err := json.Unmarshal([]byte(line), &arr); err != nil {
-			continue
-		}
-		if len(arr) == 0 {
-			continue
-		}
-		first, ok := arr[0].([]interface{})
-		if !ok || len(first) < 3 {
-			continue
-		}
-		innerStr, ok := first[2].(string)
-		if !ok || len(innerStr) < 50 {
-			continue
-		}
-		var inner []interface{}
-		if err := json.Unmarshal([]byte(innerStr), &inner); err != nil {
-			continue
-		}
-		if len(inner) <= 4 {
-			continue
-		}
-		parts, ok := inner[4].([]interface{})
-		if !ok {
-			continue
-		}
-		for _, p := range parts {
-			pl, ok := p.([]interface{})
-			if !ok || len(pl) < 2 {
-				continue
-			}
-			tl, ok := pl[1].([]interface{})
-			if !ok {
-				continue
-			}
-			for _, t := range tl {
-				if s, ok := t.(string); ok && s != "" {
-					texts = append(texts, s)
-				}
-			}
-		}
+		texts = append(texts, textsInLine(line)...)
 	}
 	for i := len(texts) - 1; i >= 0; i-- {
 		if strings.TrimSpace(texts[i]) != "" {
@@ -362,17 +414,17 @@ func truncate(s string, n int) string {
 
 // ProbeResult 是 admin 测试接口返回的连通性诊断结果。
 type ProbeResult struct {
-	OK            bool   `json:"ok"`
-	Status        string `json:"status"`         // "success" / "blocked_sorry" / "rate_limited" / "upstream_error" / "network_error"
-	HTTPCode      int    `json:"http_code"`
-	TotalMs       int64  `json:"total_ms"`
-	ProxyID       int64  `json:"proxy_id"`
-	ProxyName     string `json:"proxy_name"`
-	UseDirect     bool   `json:"use_direct"`
-	ResponseText  string `json:"response_text"`  // 截断到 200 字符
-	UpstreamSnip  string `json:"upstream_snip"`  // 上游原始响应前 300 字符
-	Diagnostic    string `json:"diagnostic"`     // 中文诊断说明
-	Impersonate   string `json:"impersonate"`
+	OK           bool   `json:"ok"`
+	Status       string `json:"status"` // "success" / "blocked_sorry" / "rate_limited" / "upstream_error" / "network_error"
+	HTTPCode     int    `json:"http_code"`
+	TotalMs      int64  `json:"total_ms"`
+	ProxyID      int64  `json:"proxy_id"`
+	ProxyName    string `json:"proxy_name"`
+	UseDirect    bool   `json:"use_direct"`
+	ResponseText string `json:"response_text"` // 截断到 200 字符
+	UpstreamSnip string `json:"upstream_snip"` // 上游原始响应前 300 字符
+	Diagnostic   string `json:"diagnostic"`    // 中文诊断说明
+	Impersonate  string `json:"impersonate"`
 }
 
 // probeGemini 直接调 Gemini StreamGenerate（绕过限流），返回详细诊断。

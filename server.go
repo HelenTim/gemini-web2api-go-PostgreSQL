@@ -70,8 +70,9 @@ func buildUsage(prompt, text string, responsesAPI bool) map[string]int {
 	}
 }
 
-func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{}) (string, []ToolCall, *StreamResult, error) {
-	res, err := streamGenerate(prompt, mc)
+func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{},
+	onDelta func(string)) (string, []ToolCall, *StreamResult, error) {
+	res, err := streamGenerate(prompt, mc, onDelta)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -163,9 +164,33 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools)
+	stream, _ := req["stream"].(bool)
+	includeUsage := false
+	if so, ok := req["stream_options"].(map[string]interface{}); ok {
+		includeUsage, _ = so["include_usage"].(bool)
+	}
+
+	cid := "chatcmpl-" + randHex(12)
+	created := time.Now().Unix()
+
+	// 只有无 tools 时才真流式：tool_call 块必须拿到完整文本才能 regex 解析，
+	// 边出边转发会把 ```tool_call``` 原文推给客户端。
+	var sse *sseWriter
+	var onDelta func(string)
+	if stream {
+		sse = newSSEWriter(w, cid, created, modelName)
+		if len(tools) == 0 {
+			onDelta = sse.SendContent
+		}
+	}
+
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta)
 	if err != nil {
-		recordRequest("chat.completions", modelName, prompt, "", nil, 502, err.Error(), false)
+		recordRequest("chat.completions", modelName, prompt, "", nil, 502, err.Error(), stream)
+		if sse != nil && sse.Started() {
+			sse.Fail(err) // 已经开流，HTTP 状态码改不了了
+			return
+		}
 		if rle, ok := err.(*RateLimitError); ok {
 			writeJSON(w, 429, map[string]interface{}{"error": map[string]string{
 				"message": rle.Error(),
@@ -178,7 +203,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cid := "chatcmpl-" + randHex(12)
 	msg := map[string]interface{}{"role": "assistant"}
 	if text != "" {
 		msg["content"] = text
@@ -191,37 +215,27 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		finish = "tool_calls"
 	}
 
-	stream, _ := req["stream"].(bool)
 	recordRequest("chat.completions", modelName, prompt, text, res, 200, "", stream)
 	if stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(200)
-		chunk := map[string]interface{}{
-			"id":      cid,
-			"object":  "chat.completion.chunk",
-			"created": time.Now().Unix(),
-			"model":   modelName,
-			"choices": []map[string]interface{}{{
-				"index":         0,
-				"delta":         msg,
-				"finish_reason": finish,
-			}},
+		var usage map[string]int
+		if includeUsage {
+			usage = buildUsage(prompt, text, false)
 		}
-		chunkJSON, _ := json.Marshal(chunk)
-		fmt.Fprintf(w, "data: %s\n\n", chunkJSON)
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
+		// 真流式已发出的不重发，只补尾巴；有 tools 时没走真流式，这里发全量。
+		if rest := remainingText(text, res); rest != "" {
+			sse.SendContent(rest)
 		}
+		if len(toolCalls) > 0 {
+			sse.SendToolCalls(toolCalls)
+		}
+		sse.Finish(finish, usage)
 		return
 	}
 
 	writeJSON(w, 200, map[string]interface{}{
 		"id":      cid,
 		"object":  "chat.completion",
-		"created": time.Now().Unix(),
+		"created": created,
 		"model":   modelName,
 		"choices": []map[string]interface{}{{
 			"index":         0,
@@ -230,6 +244,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}},
 		"usage": buildUsage(prompt, text, false),
 	})
+}
+
+// remainingText 返回最终文本里还没通过 onDelta 发出去的部分。
+// 真流式下通常只剩末尾一点或为空；没走真流式时 Emitted 为空，返回全文。
+func remainingText(text string, res *StreamResult) string {
+	if res == nil || res.Emitted == "" {
+		return text
+	}
+	if strings.HasPrefix(text, res.Emitted) {
+		return text[len(res.Emitted):]
+	}
+	// 前缀对不上（上游中途改写过），已发的收不回，不再补发以免重复。
+	return ""
 }
 
 // handleResponses implements OpenAI's /v1/responses (Codex CLI format).
@@ -357,7 +384,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools)
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, nil)
 	if err != nil {
 		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), false)
 		if rle, ok := err.(*RateLimitError); ok {
