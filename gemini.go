@@ -44,7 +44,9 @@ var Models = map[string]ModelConfig{
 }
 
 // hasCookie 表示是否配置了 Google 账号 cookie。
-func hasCookie() bool { return cfg.CookieFile != "" }
+// hasCookie 看的是当前实际生效的 cookie（面板存的或文件里的），
+// 不是"有没有配 --cookie-file"——面板粘贴后要立刻反映出来。
+func hasCookie() bool { return currentCookieRaw() != "" }
 
 // availableModels 返回当前配置下值得暴露的模型。
 //

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	tls_client "github.com/bogdanfinn/tls-client"
@@ -127,15 +128,47 @@ func getStdlibClient(proxyURL string) *http.Client {
 }
 
 // loadCookie reads the cookie file (Netscape one-line format or JSON).
+// cookieRuntime 缓存当前生效的 cookie 串，避免每个请求都查一次 DB。
+// 面板保存时同步更新；空串表示未配置。
+var cookieRuntime atomic.Value
+
+// initCookie 启动时装载：面板存的（kv）优先，其次是 --cookie-file 指向的文件。
+func initCookie() {
+	if v := kvGet("google_cookie"); strings.TrimSpace(v) != "" {
+		cookieRuntime.Store(strings.TrimSpace(v))
+		return
+	}
+	if cfg.CookieFile != "" {
+		if data, err := os.ReadFile(cfg.CookieFile); err == nil {
+			cookieRuntime.Store(strings.TrimSpace(string(data)))
+			return
+		}
+	}
+	cookieRuntime.Store("")
+}
+
+// setCookie 保存面板粘贴的 cookie，立刻生效。空串表示清除。
+func setCookie(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if err := kvSet("google_cookie", raw); err != nil {
+		return err
+	}
+	cookieRuntime.Store(raw)
+	return nil
+}
+
+func currentCookieRaw() string {
+	v, _ := cookieRuntime.Load().(string)
+	return v
+}
+
+// loadCookie 返回 (cookie 串, SAPISID)。两种输入格式都吃：
+// 浏览器直接复制的 "k=v; k=v" 一行，或 {"cookie":"...","sapisid":"..."} 的 JSON。
 func loadCookie() (string, string) {
-	if cfg.CookieFile == "" {
+	content := currentCookieRaw()
+	if content == "" {
 		return "", ""
 	}
-	data, err := os.ReadFile(cfg.CookieFile)
-	if err != nil {
-		return "", ""
-	}
-	content := strings.TrimSpace(string(data))
 	if strings.HasPrefix(content, "{") {
 		var obj struct {
 			Cookie  string `json:"cookie"`

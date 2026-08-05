@@ -74,6 +74,7 @@ func main() {
 	// boot DB and load proxy pool
 	getDB()
 	initRuntimeConfig() // 面板改过的运行时配置盖在启动配置之上
+	initCookie()        // 面板存的 cookie 优先于 --cookie-file
 	loadProxies()
 	resolvedAPIKey := initAPIKey(*apiKey)
 	initTokenizer()
@@ -132,6 +133,7 @@ func main() {
 		mux.HandleFunc("/admin/api/apikey", requireAuth(handleAdminAPIKey))
 		mux.HandleFunc("/admin/api/usage", requireAuth(handleAdminUsage))
 		mux.HandleFunc("/admin/api/config", requireAuth(handleAdminConfig))
+		mux.HandleFunc("/admin/api/cookie", requireAuth(handleAdminCookie))
 		mux.HandleFunc("/admin/api/test", requireAuth(handleAdminTest))
 	}
 
@@ -144,8 +146,13 @@ func main() {
 	}
 
 	cookieStatus := "none (anonymous)"
-	if cfg.CookieFile != "" {
-		cookieStatus = "yes (" + cfg.CookieFile + ")"
+	if hasCookie() {
+		cookieStatus = "yes"
+		if cfg.CookieFile != "" && kvGet("google_cookie") == "" {
+			cookieStatus += " (" + cfg.CookieFile + ")"
+		} else {
+			cookieStatus += " (admin panel)"
+		}
 	}
 	proxyStatus := rtCfg().Proxy
 	if proxyStatus == "" {

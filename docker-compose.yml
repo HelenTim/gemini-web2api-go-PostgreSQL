@@ -7,11 +7,12 @@ services:
     container_name: gemini-web2api
     restart: unless-stopped
 
-    # ── 部署期配置全在这个文件里 ──────────────────────────────────────────
+    # ── 这里只放"改了必须重启进程"的东西 ──────────────────────────────────
     # 调优参数（限流额度、重试、超时、默认模型、TLS 指纹、bl 版本、静态代理、
-    # 日志开关、数据保留天数）**不在这里配** —— 那些在管理面板
-    # 「设置 → 运行时配置」里改，保存即生效、不用重启。
-    # 这里只放两类：改了必须重启进程的，以及不该经过浏览器表单的凭证。
+    # 日志开关、保留天数）在管理面板「设置 → 运行时配置」里改，保存即生效。
+    # 凭证（API Key、Google Cookie）也在面板里管，存数据库。
+    # 下面的 API_KEY / cookie 挂载都是**可选的锁定开关**，给不希望运行时被改
+    # 的部署用；不设的话默认走面板。
 
     ports:
       - "127.0.0.1:8083:8083"
@@ -22,13 +23,13 @@ services:
 
     volumes:
       - ./data:/data                              # SQLite + 历史记录持久化
-      # - ./cookie.txt:/app/cookie.txt:ro         # 挂 Google 账号 cookie；挂了才会暴露 gemini-3.1-pro
+      # - ./cookie.txt:/app/cookie.txt:ro         # 可选：面板没存 cookie 时的兜底文件
 
     environment:
       # 面板登录 token。留空 = 面板不鉴权，只有在绑定 127.0.0.1 时才可接受。
       ADMIN_TOKEN: "${ADMIN_TOKEN:-change-me-in-production}"
-      # 锁定 /v1/* 的 API key：设了之后面板里改不了，适合不希望被运行时改动的部署。
-      # 不设则首次启动自动生成，可在面板轮换。
+      # 可选：锁定 /v1/* 的 API key，设了之后面板改不了。
+      # 不设则首次启动自动生成，在面板里轮换。
       # API_KEY: "sk-gemini-your-key"
       TZ: "${TZ:-UTC}"
 
@@ -37,7 +38,7 @@ services:
       - "/data/gemini.db"
       - "--port"
       - "8083"
-      # 挂了 cookie 就把下面两行打开
+      # 用兜底 cookie 文件时才需要（面板里粘贴不用这个）
       # - "--cookie-file"
       # - "/app/cookie.txt"
 
