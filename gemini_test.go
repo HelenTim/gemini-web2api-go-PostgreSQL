@@ -146,3 +146,57 @@ func TestToolChoice(t *testing.T) {
 		t.Errorf("auto 应保持宽松措辞: %s", p)
 	}
 }
+
+// 流式的核心不变量：所有增量拼起来必须精确等于最终文本，既不能丢也不能重复。
+func TestDeltaTrackerAccumulates(t *testing.T) {
+	// 上游每帧是累积全文，逐帧变长
+	frames := []string{
+		"Transformer",
+		"Transformer 的核心",
+		"Transformer 的核心是自注意力",
+		"Transformer 的核心是自注意力机制。",
+	}
+	d := &deltaTracker{}
+	var got string
+	for _, f := range frames {
+		got += d.Push(f)
+	}
+	want := cleanGeminiText(frames[len(frames)-1])
+	if got != want {
+		t.Errorf("增量拼接=%q want %q", got, want)
+	}
+	if d.emitted != want {
+		t.Errorf("emitted=%q want %q", d.emitted, want)
+	}
+
+	// 重复帧不得再次发出
+	if extra := d.Push(frames[len(frames)-1]); extra != "" {
+		t.Errorf("重复帧不该产生增量, got %q", extra)
+	}
+	// 变短的帧（乱序到达）也不发
+	if extra := d.Push("Transformer"); extra != "" {
+		t.Errorf("更短的帧不该产生增量, got %q", extra)
+	}
+	// 前缀对不上时跳过，emitted 保持不变
+	before := d.emitted
+	if extra := d.Push("完全不同的一段文本，比原来的还要长很多很多很多很多"); extra != "" {
+		t.Errorf("非前缀帧不该产生增量, got %q", extra)
+	}
+	if d.emitted != before {
+		t.Errorf("非前缀帧不该改动 emitted")
+	}
+
+	// remainingText 负责补齐 tracker 跳过的尾巴
+	full := want + "补充的尾巴"
+	if r := remainingText(full, &StreamResult{Emitted: d.emitted}); r != "补充的尾巴" {
+		t.Errorf("remainingText=%q want %q", r, "补充的尾巴")
+	}
+	// 非真流式（Emitted 为空）时应返回全文
+	if r := remainingText(full, &StreamResult{}); r != full {
+		t.Errorf("Emitted 为空时应返回全文")
+	}
+	// 前缀对不上时不补发，避免重复
+	if r := remainingText("另一段内容", &StreamResult{Emitted: d.emitted}); r != "" {
+		t.Errorf("前缀对不上时不该补发, got %q", r)
+	}
+}

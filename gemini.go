@@ -121,6 +121,25 @@ func releaseSlot(proxyID int64) {
 	slotRelease(proxyID)
 }
 
+// deltaTracker 把上游的累积帧转成增量。
+//
+// 上游每帧带的是**到目前为止的全文**，不是新增部分，所以要跟已发出的做前缀
+// 比对。帧之间偶尔不满足前缀关系（模型改写、或 clean 掉的 artifact 落在边界
+// 上），这时宁可跳过也不能发——发了就等于把重复内容推给客户端，而已发出的
+// 内容收不回来。漏掉的部分由调用方在结束时用 remainingText 补齐。
+type deltaTracker struct{ emitted string }
+
+// Push 吃进一帧的累积全文，返回相对上一次的增量；没有新增或无法安全 diff 时返回 ""。
+func (d *deltaTracker) Push(fullText string) string {
+	cleaned := cleanGeminiText(fullText)
+	if len(cleaned) <= len(d.emitted) || !strings.HasPrefix(cleaned, d.emitted) {
+		return ""
+	}
+	delta := cleaned[len(d.emitted):]
+	d.emitted = cleaned
+	return delta
+}
+
 // streamGenerate POSTs to Gemini's StreamGenerate endpoint and returns raw body
 // plus proxy/timing telemetry for the metrics layer.
 // The 80-slot inner array is verbatim from the Python reference.
@@ -187,15 +206,13 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 	var lastErr error
 	t0 := time.Now()
 
-	emitted := ""
+	tracker := &deltaTracker{}
 	var lineCB func(string)
 	if onDelta != nil {
 		lineCB = func(line string) {
 			for _, t := range textsInLine(line) {
-				cleaned := cleanGeminiText(t)
-				if len(cleaned) > len(emitted) && strings.HasPrefix(cleaned, emitted) {
-					onDelta(cleaned[len(emitted):])
-					emitted = cleaned
+				if d := tracker.Push(t); d != "" {
+					onDelta(d)
 				}
 			}
 		}
@@ -210,7 +227,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 				recordProxyResult(picked.ID, false, err.Error())
 			}
 			// 已经往客户端吐过内容就不能重试，否则会重复。
-			if emitted != "" {
+			if tracker.emitted != "" {
 				break
 			}
 			if attempt < cfg.RetryAttempts-1 {
@@ -225,7 +242,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			if pickedOK {
 				recordProxyResult(picked.ID, false, lastErr.Error())
 			}
-			if emitted != "" {
+			if tracker.emitted != "" {
 				break
 			}
 			if attempt < cfg.RetryAttempts-1 {
@@ -237,7 +254,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			recordProxyResult(picked.ID, true, "")
 		}
 		return &StreamResult{
-			Emitted:   emitted,
+			Emitted:   tracker.emitted,
 			Raw:       string(raw),
 			ProxyID:   picked.ID,
 			ProxyName: picked.Name,
