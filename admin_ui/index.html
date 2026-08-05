@@ -267,7 +267,7 @@ const pages = {
             <th>时间</th><th>模型</th><th>实际模型</th><th>代理</th><th>状态</th>
             <th>首字延迟</th><th>总用时</th><th>输入 Token</th><th>输出 Token</th><th>接口</th>
           </tr></thead>
-          <tbody><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+          <tbody><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
         </table>
         <div style="margin-top: 12px; text-align: center;" id="reqPager"></div>
       </div>
@@ -468,7 +468,7 @@ async function loadReqs() {
       <td><span class="pre">${escapeHtml(r.endpoint)}${r.stream ? ' <span class="badge muted">stream</span>' : ''}</span>
         ${r.error ? '<div class="pre" style="color:#f87171; margin-top:4px"><b>错误：</b> ' + escapeHtml(r.error) + '</div>' : ''}
       </td>
-    </tr>`).join('') || '<tr><td colspan="9" class="empty">还没有请求记录</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="10" class="empty">还没有请求记录</td></tr>';
   document.getElementById('reqPager').innerHTML = `
     <button class="btn muted" ${reqOffset === 0 ? 'disabled' : ''} onclick="reqOffset=Math.max(0,reqOffset-${REQ_PAGE});loadReqs()">← 上一页</button>
     <span style="margin: 0 12px; color: var(--muted)">${reqOffset+1}-${Math.min(reqOffset+REQ_PAGE, data.total)} / 共 ${data.total} 条</span>
