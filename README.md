@@ -226,12 +226,18 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 
 | 路径 | 状态 | 备注 |
 |---|---|---|
-| `POST /v1/chat/completions` | ✅ | 支持 `stream: true`，但是先取完整回复再切成 SSE 块，不是增量流式 |
-| `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用） |
+| `POST /v1/chat/completions` | ✅ | 真流式：上游每出一帧就转发增量（实测 400 字中文回答产生 40 个 chunk）。chunk 序列为 `delta{role}` → `delta{content}`×N → 空 `delta`+`finish_reason` → `[DONE]`。**带 `tools` 时退化为收完再发**——tool_call 块要完整文本才能解析 |
+| `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用）。**未做真流式**，仍是收完再按事件序列发 |
 | `GET /v1/models` | ✅ | 3 个真模型 + 5 个旧名别名 |
-| Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。实测 5 种工具中 3 种正常输出 tool_call；**查私有数据/内部系统类可靠**，但 Gemini 自己能做的（如查天气）会被它直接回答，有副作用的动作（如发邮件）会被拒绝 |
-| Vision / 图片输入 | ❌ | 未实现，且匿名走不通。匿名**能**上传（`content-push.googleapis.com/upload/` 两步 resumable，返回 `/contrib_service/ttl_1d/…`），但对话引用该文件被服务端拒绝（`BardErrorInfo 1100`）。需要登录态 |
-| Audio | ❌ | 未实现。网页端有音乐生成（Lyria 3），需要登录态 |
+| Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。**查私有数据/内部系统类可靠**，但 Gemini 自己能做的（如查天气）会被它直接回答，有副作用的动作（如发邮件）会被拒绝 |
+| `tool_choice` | ⚠️ | `none` 完全不注入工具定义；`required` 和指定函数会加强制措辞、并把其余工具从 prompt 裁掉。但 prompt 级实现**无法真正强制**——实测模型自己答得上来的问题（天气、2+2）即使 `required` 也照样直接作答 |
+| `stream_options.include_usage` | ✅ | 在 `finish_reason` 之后补一个 `choices` 为空的 usage chunk |
+| `usage` token 数 | ✅ | tiktoken cl100k_base，与管理面板 requests 表同口径 |
+| `n` > 1 | ❌ | 返回 400。上游只给一个候选，静默按 1 处理会让客户端少拿结果 |
+| 采样参数 | ➖ | `temperature` / `top_p` / `max_tokens` / `stop` / `seed` / `presence_penalty` / `frequency_penalty` **收下即忽略，不报错**。Gemini 网页协议没有这些旋钮 |
+| `response_format` / `logprobs` | ➖ | 未实现，收下即忽略 |
+| Vision / 图片输入 | ❌ | 传 `image_url` 返回 400。匿名**能**上传（`content-push.googleapis.com/upload/` 两步 resumable，返回 `/contrib_service/ttl_1d/…`），但对话引用该文件被上游拒绝（`BardErrorInfo 1100`），需要登录态 |
+| Audio | ❌ | 传 `input_audio` 返回 400。网页端有音乐生成（Lyria 3），需要登录态 |
 
 ## 项目结构
 
@@ -241,7 +247,8 @@ config.go            配置加载 + DEFAULT_CONFIG
 client.go            tls-client (chrome146) + stdlib (代理) 双 client
 gemini.go            模型表 + 80 槽位 payload + 模型 header + StreamGenerate + wrb.fr 流解析
 messages.go          OpenAI messages → prompt + tool_call 解析
-server.go            /v1/* + 限流入口 + metrics 写入
+server.go            /v1/* + 限流入口 + 请求字段校验 + metrics 写入
+sse.go               chat.completion.chunk 的 SSE 写出器（懒发 header）
 ratelimit.go         每 IP slot 独立并发/RPM/RPH 限流器
 tokenizer.go         tiktoken cl100k_base 单例
 apikey.go            API key 管理（locked / runtime-mutable 双轨）

@@ -233,12 +233,18 @@ Proxied connections use stdlib `net/http` + `http.ProxyURL` (best compatibility)
 
 | Endpoint | Status | Notes |
 |---|---|---|
-| `POST /v1/chat/completions` | ✅ | `stream: true` supported, but the full reply is fetched first and then chunked — not incremental streaming |
-| `POST /v1/responses` | ✅ | OpenAI Responses API (used by Codex CLI) |
+| `POST /v1/chat/completions` | ✅ | Real streaming — each upstream frame is diffed and forwarded as it arrives (400-char Chinese answer produced 40 chunks). Sequence: `delta{role}` → `delta{content}`×N → empty `delta` + `finish_reason` → `[DONE]`. **Falls back to buffered when `tools` are present** — tool_call blocks need the complete text to parse |
+| `POST /v1/responses` | ✅ | OpenAI Responses API (used by Codex CLI). **Not incrementally streamed** — still buffered, then emitted as the event sequence |
 | `GET /v1/models` | ✅ | 3 real models + 5 legacy aliases |
-| Function calling | ⚠️ | Prompt-level implementation (model emits ` ```tool_call``` ` blocks parsed via regex), not a true protocol layer. 3 of 5 tested tools emitted a proper tool_call; **reliable for private-data / internal-system lookups**, but anything Gemini can answer itself (weather) gets answered directly, and side-effecting actions (sending email) are refused |
-| Vision / file input | ❌ | Not implemented, and anonymous does not work. Anonymous upload **succeeds** (`content-push.googleapis.com/upload/`, two-step resumable, returns `/contrib_service/ttl_1d/…`) but referencing the file in a conversation is refused (`BardErrorInfo 1100`). Needs a signed-in session |
-| Audio | ❌ | Not implemented. The web UI has music generation (Lyria 3), signed-in only |
+| Function calling | ⚠️ | Prompt-level implementation (model emits ` ```tool_call``` ` blocks parsed via regex), not a true protocol layer. **Reliable for private-data / internal-system lookups**, but anything Gemini can answer itself (weather) gets answered directly, and side-effecting actions (sending email) are refused |
+| `tool_choice` | ⚠️ | `none` skips tool definitions entirely; `required` and a named function add a mandatory instruction and drop the other tools from the prompt. A prompt-level layer **cannot truly force it** — in testing, questions the model can answer itself (weather, 2+2) were answered directly even under `required` |
+| `stream_options.include_usage` | ✅ | Emits a usage chunk with an empty `choices` array after `finish_reason` |
+| `usage` token counts | ✅ | tiktoken cl100k_base, same basis as the admin requests table |
+| `n` > 1 | ❌ | Returns 400. Upstream yields a single candidate; silently treating it as 1 would short-change the client |
+| Sampling params | ➖ | `temperature` / `top_p` / `max_tokens` / `stop` / `seed` / penalties are **accepted and ignored, not rejected**. Gemini's web protocol has no such knobs |
+| `response_format` / `logprobs` | ➖ | Not implemented, accepted and ignored |
+| Vision / file input | ❌ | Sending `image_url` returns 400. Anonymous upload **succeeds** (`content-push.googleapis.com/upload/`, two-step resumable, returns `/contrib_service/ttl_1d/…`) but referencing the file is refused upstream (`BardErrorInfo 1100`); needs a signed-in session |
+| Audio | ❌ | Sending `input_audio` returns 400. The web UI has music generation (Lyria 3), signed-in only |
 
 ## Project layout
 
@@ -248,7 +254,8 @@ config.go            Config loading + DEFAULT_CONFIG
 client.go            tls-client (chrome146) + stdlib (proxy) dual client
 gemini.go            model table + 80-slot payload + model header + StreamGenerate + wrb.fr stream parser
 messages.go          OpenAI messages → prompt + tool_call parsing
-server.go            /v1/* handlers + rate-limit gate + metrics writes
+server.go            /v1/* handlers + rate-limit gate + request validation + metrics writes
+sse.go               chat.completion.chunk SSE writer (lazy header)
 ratelimit.go         Per-IP-slot concurrency/RPM/RPH limiter
 tokenizer.go         tiktoken cl100k_base singleton
 apikey.go            API key management (locked / runtime-mutable dual-mode)
