@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>gemini-web2api 管理面板</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- Chart.js 随二进制一起 embed，不走 CDN：内网/离线部署也要能开面板 -->
+<script src="/admin/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #0f1419; --panel: #1a1f29; --border: #2a3140;
