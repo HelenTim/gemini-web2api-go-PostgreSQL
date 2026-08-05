@@ -62,3 +62,34 @@ func TestEmptyFrameDetection(t *testing.T) {
 		t.Errorf("正常响应应解析出 banana, got %q", got)
 	}
 }
+
+// usage 必须跟 requests 表口径一致（都走 tiktoken），不能退回 chars/4。
+func TestUsageUsesTokenizer(t *testing.T) {
+	initTokenizer()
+	// 取一段 tiktoken 与 chars/4 结果明显不同的样本，否则断言区分不出新旧实现。
+	prompt := "请详细解释注意力机制的计算过程，并说明多头注意力为什么有效。"
+	text := "自注意力通过查询、键、值三组投影计算token之间的相关性权重。"
+
+	if tokenizerOK && countTokens(prompt) == len(prompt)/4 {
+		t.Skipf("样本无区分度（tiktoken 与 chars/4 同为 %d），换样本再测", countTokens(prompt))
+	}
+
+	u := buildUsage(prompt, text, false)
+	if u["prompt_tokens"] != countTokens(prompt) || u["completion_tokens"] != countTokens(text) {
+		t.Errorf("chat usage 没走 countTokens: %v", u)
+	}
+	if u["total_tokens"] != u["prompt_tokens"]+u["completion_tokens"] {
+		t.Errorf("total 不等于两者之和: %v", u)
+	}
+	if tokenizerOK && u["prompt_tokens"] == len(prompt)/4 {
+		t.Errorf("prompt_tokens 落在 chars/4 上，仍是旧实现: %v", u)
+	}
+
+	r := buildUsage(prompt, text, true)
+	if r["input_tokens"] != countTokens(prompt) || r["output_tokens"] != countTokens(text) {
+		t.Errorf("responses usage 没走 countTokens: %v", r)
+	}
+	if _, ok := r["prompt_tokens"]; ok {
+		t.Error("responses API 不应出现 prompt_tokens 字段")
+	}
+}

@@ -52,6 +52,24 @@ func handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// buildUsage 用 tiktoken 算 token 数，跟 requests 表里记的口径保持一致。
+// responsesAPI=true 时用 /v1/responses 的字段名（input_tokens/output_tokens）。
+func buildUsage(prompt, text string, responsesAPI bool) map[string]int {
+	in, out := countTokens(prompt), countTokens(text)
+	if responsesAPI {
+		return map[string]int{
+			"input_tokens":  in,
+			"output_tokens": out,
+			"total_tokens":  in + out,
+		}
+	}
+	return map[string]int{
+		"prompt_tokens":     in,
+		"completion_tokens": out,
+		"total_tokens":      in + out,
+	}
+}
+
 func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{}) (string, []ToolCall, *StreamResult, error) {
 	res, err := streamGenerate(prompt, mc)
 	if err != nil {
@@ -210,11 +228,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			"message":       msg,
 			"finish_reason": finish,
 		}},
-		"usage": map[string]int{
-			"prompt_tokens":     len(prompt) / 4,
-			"completion_tokens": len(text) / 4,
-			"total_tokens":      (len(prompt) + len(text)) / 4,
-		},
+		"usage": buildUsage(prompt, text, false),
 	})
 }
 
@@ -439,11 +453,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 			"status": "completed",
 			"model":  modelName,
 			"output": output,
-			"usage": map[string]int{
-				"input_tokens":  len(prompt) / 4,
-				"output_tokens": len(text) / 4,
-				"total_tokens":  (len(prompt) + len(text)) / 4,
-			},
+			"usage": buildUsage(prompt, text, true),
 		}
 		writeEvent("response.completed", map[string]interface{}{
 			"type":     "response.completed",
@@ -459,10 +469,6 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		"status":     "completed",
 		"model":      modelName,
 		"output":     output,
-		"usage": map[string]int{
-			"input_tokens":  len(prompt) / 4,
-			"output_tokens": len(text) / 4,
-			"total_tokens":  (len(prompt) + len(text)) / 4,
-		},
+		"usage": buildUsage(prompt, text, true),
 	})
 }
