@@ -57,7 +57,7 @@ func resolveProfile(name string) profiles.ClientProfile {
 // implementation is fragile compared to net/http.
 func getTLSClient() tls_client.HttpClient {
 	clientCacheMu.RLock()
-	if c, ok := clientCache[cfg.Impersonate]; ok {
+	if c, ok := clientCache[rtCfg().Impersonate]; ok {
 		clientCacheMu.RUnlock()
 		return c
 	}
@@ -65,12 +65,12 @@ func getTLSClient() tls_client.HttpClient {
 
 	clientCacheMu.Lock()
 	defer clientCacheMu.Unlock()
-	if c, ok := clientCache[cfg.Impersonate]; ok {
+	if c, ok := clientCache[rtCfg().Impersonate]; ok {
 		return c
 	}
 	opts := []tls_client.HttpClientOption{
-		tls_client.WithTimeoutSeconds(cfg.RequestTimeout),
-		tls_client.WithClientProfile(resolveProfile(cfg.Impersonate)),
+		tls_client.WithTimeoutSeconds(rtCfg().RequestTimeout),
+		tls_client.WithClientProfile(resolveProfile(rtCfg().Impersonate)),
 		tls_client.WithNotFollowRedirects(),
 	}
 	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
@@ -78,7 +78,7 @@ func getTLSClient() tls_client.HttpClient {
 		fmt.Fprintf(os.Stderr, "[client] tls-client init failed: %v\n", err)
 		os.Exit(1)
 	}
-	clientCache[cfg.Impersonate] = client
+	clientCache[rtCfg().Impersonate] = client
 	return client
 }
 
@@ -115,7 +115,7 @@ func getStdlibClient(proxyURL string) *http.Client {
 		t.Proxy = http.ProxyURL(u)
 	}
 	c := &http.Client{
-		Timeout:   time.Duration(cfg.RequestTimeout) * time.Second,
+		Timeout:   time.Duration(rtCfg().RequestTimeout) * time.Second,
 		Transport: t,
 		// 跟 tls-client 一致：不自动跟随重定向（302 是诊断信号）
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

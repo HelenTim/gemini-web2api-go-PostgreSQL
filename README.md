@@ -103,7 +103,7 @@ print(resp.choices[0].message.content)
 - **仪表盘** — 24h KPI + 请求量/P50 延迟双轴趋势图 + 模型/代理分组统计 + IP 限流用量 + 一键连通性诊断
 - **请求记录** — 明细列表（仅元数据，无 prompt/response 内容），状态/模型筛选 + 分页
 - **代理池** — 运行时增删改 + 启用/禁用 + 失败次数熔断（每代理是独立 IP slot）
-- **设置** — API Key 显示/复制/旋转/自定义 + 限流配置查看
+- **设置** — 运行时配置表单（保存即生效）+ API Key 轮换 + 部署期配置只读展示
 
 ## 模型
 
@@ -151,31 +151,40 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 
 ## 配置
 
-`config.json`（可选，CLI flag 优先）：
+配置只有两个地方，按"改了要不要重启"分：
 
-```json
-{
-  "port": 8083,
-  "host": "0.0.0.0",
-  "impersonate": "chrome_146",
-  "db_path": "./data/gemini.db",
-  "retention_days": 30,
-  "admin_enabled": true,
-  "admin_token": "",
-  "request_timeout_sec": 180,
-  "retry_attempts": 3,
-  "default_model": "gemini-3.6-flash",
-  "per_ip_concurrent": 5,
-  "per_ip_rpm": 30,
-  "per_ip_rph": 80
-}
-```
+### 运行时配置 → 管理面板「设置」页
 
-支持的 impersonate：`chrome_146`（默认）/ `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0`
+保存**立刻生效**，不用重启。存在数据库里，优先级高于 `config.json` 和命令行参数。
 
-环境变量：
-- `ADMIN_TOKEN` — 管理面板登录 token
-- `API_KEY` — 锁定 `/v1/*` API key（不会显示在 admin UI 的"自定义"按钮里）
+| 项 | 说明 |
+|---|---|
+| 默认模型 | 客户端没传 `model` 时用哪个 |
+| 每 slot 并发 / RPM / RPH | 限流额度，0 = 不限 |
+| 重试次数 / 重试间隔 / 上游超时 | |
+| 明细保留天数 | 过期只删明细，聚合数据永久保留 |
+| TLS 指纹 | `chrome_146`（默认）/ `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0` |
+| Gemini `bl` 版本 | 上游前端版本号，过期时改这里 |
+| 静态代理 | 代理池为空时的兜底；一般用「代理池」页面配 |
+| 打印请求日志 | |
+
+所有值都在后端做范围校验（比如 `retry_attempts` 只接受 1-10、超时 5-600 秒），
+非法值会被拒绝并说明原因——浏览器端的限制随手就能绕过，真正的关卡在服务端。
+
+### 部署期配置 → `docker-compose.yml`
+
+改了本来就要重启进程的，以及不该经过浏览器表单的凭证：
+
+| 项 | 位置 |
+|---|---|
+| 监听端口 | `ports` + `command: --port` |
+| 数据库路径 | `volumes` + `command: --db` |
+| Cookie 文件 | `volumes` 挂载 + `command: --cookie-file` |
+| `ADMIN_TOKEN` | `environment`，面板登录 token |
+| `API_KEY` | `environment`，锁定 `/v1/*` key（设了面板就改不了） |
+
+命令行参数仍然可用，但定位是本地调试时的临时覆盖。三者优先级：
+**面板改动 > CLI flag / `config.json` > 内置默认**。
 
 ## Cookie（可选）
 

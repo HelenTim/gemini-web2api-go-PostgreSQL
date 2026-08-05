@@ -8,7 +8,7 @@ import (
 // startScheduler kicks off background loops:
 //   1. hourly aggregation: rolls up requests in the previous closed hour bucket
 //   2. daily aggregation: rolls up the previous closed day bucket
-//   3. retention: deletes raw requests older than cfg.RetentionDays
+//   3. retention: deletes raw requests older than rtCfg().RetentionDays
 //   4. proxy cache reload: every 60s pull proxies from DB
 func startScheduler() {
 	go func() {
@@ -244,10 +244,10 @@ func percentiles(latencies []int) (p50, p95 int) {
 
 // retentionSweep deletes raw requests older than RetentionDays and expired sessions.
 func retentionSweep() {
-	if cfg.RetentionDays <= 0 {
+	if rtCfg().RetentionDays <= 0 {
 		return
 	}
-	cutoff := time.Now().Unix() - int64(cfg.RetentionDays)*86400
+	cutoff := time.Now().Unix() - int64(rtCfg().RetentionDays)*86400
 	res, err := getDB().Exec(`DELETE FROM requests WHERE ts < ?`, cutoff)
 	if err != nil {
 		logf("[retention] failed: %v", err)

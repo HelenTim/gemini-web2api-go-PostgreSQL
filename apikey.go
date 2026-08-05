@@ -24,9 +24,9 @@ import (
 // when not locked.
 
 var (
-	apiKeyLocked   bool
-	apiKeyRuntime  atomic.Value // string
-	apiKeyMu       sync.Mutex
+	apiKeyLocked  bool
+	apiKeyRuntime atomic.Value // string
+	apiKeyMu      sync.Mutex
 )
 
 const apiKeyPrefix = "sk-gemini-"

@@ -60,13 +60,13 @@ func trySlotAcquire(proxyID int64) (bool, string) {
 	s.minuteWin = pruneTimestamps(s.minuteWin, cutMin)
 	s.hourWin = pruneTimestamps(s.hourWin, cutHour)
 
-	if cfg.PerIPConcurrent > 0 && s.inflight >= cfg.PerIPConcurrent {
+	if rtCfg().PerIPConcurrent > 0 && s.inflight >= rtCfg().PerIPConcurrent {
 		return false, "concurrent"
 	}
-	if cfg.PerIPRPM > 0 && len(s.minuteWin) >= cfg.PerIPRPM {
+	if rtCfg().PerIPRPM > 0 && len(s.minuteWin) >= rtCfg().PerIPRPM {
 		return false, "rpm"
 	}
-	if cfg.PerIPRPH > 0 && len(s.hourWin) >= cfg.PerIPRPH {
+	if rtCfg().PerIPRPH > 0 && len(s.hourWin) >= rtCfg().PerIPRPH {
 		return false, "rph"
 	}
 
@@ -88,13 +88,13 @@ func slotRelease(proxyID int64) {
 
 // SlotUsage admin UI 看用量用。
 type SlotUsage struct {
-	ProxyID    int64 `json:"proxy_id"`
-	Inflight   int   `json:"inflight"`
-	RPM        int   `json:"rpm"`
-	RPH        int   `json:"rph"`
-	LimitConc  int   `json:"limit_concurrent"`
-	LimitRPM   int   `json:"limit_rpm"`
-	LimitRPH   int   `json:"limit_rph"`
+	ProxyID   int64 `json:"proxy_id"`
+	Inflight  int   `json:"inflight"`
+	RPM       int   `json:"rpm"`
+	RPH       int   `json:"rph"`
+	LimitConc int   `json:"limit_concurrent"`
+	LimitRPM  int   `json:"limit_rpm"`
+	LimitRPH  int   `json:"limit_rph"`
 }
 
 func slotUsage(proxyID int64) SlotUsage {
@@ -105,13 +105,13 @@ func slotUsage(proxyID int64) SlotUsage {
 	s.minuteWin = pruneTimestamps(s.minuteWin, now-60)
 	s.hourWin = pruneTimestamps(s.hourWin, now-3600)
 	return SlotUsage{
-		ProxyID:    proxyID,
-		Inflight:   s.inflight,
-		RPM:        len(s.minuteWin),
-		RPH:        len(s.hourWin),
-		LimitConc:  cfg.PerIPConcurrent,
-		LimitRPM:   cfg.PerIPRPM,
-		LimitRPH:   cfg.PerIPRPH,
+		ProxyID:   proxyID,
+		Inflight:  s.inflight,
+		RPM:       len(s.minuteWin),
+		RPH:       len(s.hourWin),
+		LimitConc: rtCfg().PerIPConcurrent,
+		LimitRPM:  rtCfg().PerIPRPM,
+		LimitRPH:  rtCfg().PerIPRPH,
 	}
 }
 

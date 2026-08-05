@@ -10,7 +10,7 @@ import (
 )
 
 func logf(format string, args ...interface{}) {
-	if cfg.LogRequests {
+	if rtCfg().LogRequests {
 		fmt.Fprintf(os.Stderr, "[%s] %s\n",
 			time.Now().Format("15:04:05"),
 			fmt.Sprintf(format, args...))
@@ -73,6 +73,7 @@ func main() {
 
 	// boot DB and load proxy pool
 	getDB()
+	initRuntimeConfig() // 面板改过的运行时配置盖在启动配置之上
 	loadProxies()
 	resolvedAPIKey := initAPIKey(*apiKey)
 	initTokenizer()
@@ -130,6 +131,7 @@ func main() {
 		mux.HandleFunc("/admin/api/proxies/", requireAuth(handleAdminProxyItem))
 		mux.HandleFunc("/admin/api/apikey", requireAuth(handleAdminAPIKey))
 		mux.HandleFunc("/admin/api/usage", requireAuth(handleAdminUsage))
+		mux.HandleFunc("/admin/api/config", requireAuth(handleAdminConfig))
 		mux.HandleFunc("/admin/api/test", requireAuth(handleAdminTest))
 	}
 
@@ -145,7 +147,7 @@ func main() {
 	if cfg.CookieFile != "" {
 		cookieStatus = "yes (" + cfg.CookieFile + ")"
 	}
-	proxyStatus := cfg.Proxy
+	proxyStatus := rtCfg().Proxy
 	if proxyStatus == "" {
 		proxyStatus = "none"
 	}
@@ -171,15 +173,15 @@ func main() {
 	fmt.Printf("  Models:      %v\n", modelNames)
 	fmt.Printf("  Cookie:      %s\n", cookieStatus)
 	fmt.Printf("  Proxy:       %s\n", proxyStatus)
-	fmt.Printf("  Impersonate: %s\n", cfg.Impersonate)
+	fmt.Printf("  Impersonate: %s\n", rtCfg().Impersonate)
 	tokInfo := "chars/4 (fallback)"
 	if tokenizerOK {
 		tokInfo = "tiktoken cl100k_base"
 	}
 	fmt.Printf("  Tokenizer:   %s\n", tokInfo)
 	fmt.Printf("  Per-IP 限流: 并发=%d / RPM=%d / RPH=%d\n",
-		cfg.PerIPConcurrent, cfg.PerIPRPM, cfg.PerIPRPH)
-	fmt.Printf("  Retry:       %dx / %ds\n", cfg.RetryAttempts, cfg.RetryDelaySec)
+		rtCfg().PerIPConcurrent, rtCfg().PerIPRPM, rtCfg().PerIPRPH)
+	fmt.Printf("  Retry:       %dx / %ds\n", rtCfg().RetryAttempts, rtCfg().RetryDelaySec)
 	fmt.Println()
 
 	if err := server.ListenAndServe(); err != nil {

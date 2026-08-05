@@ -166,7 +166,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	modelInput := getStr(req, "model")
 	if modelInput == "" {
-		modelInput = cfg.DefaultModel
+		modelInput = rtCfg().DefaultModel
 	}
 	modelName, modelCfg, err := resolveModel(modelInput)
 	if err != nil {
@@ -312,7 +312,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	modelInput := getStr(req, "model")
 	if modelInput == "" {
-		modelInput = cfg.DefaultModel
+		modelInput = rtCfg().DefaultModel
 	}
 	modelName, modelCfg, err := resolveModel(modelInput)
 	if err != nil {

@@ -213,7 +213,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 	reqid := time.Now().Unix() % 1000000
 	endpoint := fmt.Sprintf(
 		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
-		cfg.GeminiBL, reqid,
+		rtCfg().GeminiBL, reqid,
 	)
 
 	cookieStr, sapisid := loadCookie()
@@ -227,7 +227,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 
 	proxyURL := picked.URL
 	if proxyURL == "" {
-		proxyURL = cfg.Proxy // fallback 静态 proxy（一般用不到）
+		proxyURL = rtCfg().Proxy // fallback 静态 proxy（一般用不到）
 	}
 	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
 
@@ -247,7 +247,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		}
 	}
 
-	for attempt := 0; attempt < cfg.RetryAttempts; attempt++ {
+	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
 		statusCode, raw, ttfb, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
 		if err != nil {
 			lastErr = err
@@ -258,9 +258,9 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			if tracker.emitted != "" {
 				break
 			}
-			if attempt < cfg.RetryAttempts-1 {
-				logf("retry %d/%d: %v", attempt+1, cfg.RetryAttempts, err)
-				time.Sleep(time.Duration(cfg.RetryDelaySec) * time.Second)
+			if attempt < rtCfg().RetryAttempts-1 {
+				logf("retry %d/%d: %v", attempt+1, rtCfg().RetryAttempts, err)
+				time.Sleep(time.Duration(rtCfg().RetryDelaySec) * time.Second)
 			}
 			continue
 		}
@@ -272,8 +272,8 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			if tracker.emitted != "" {
 				break
 			}
-			if attempt < cfg.RetryAttempts-1 {
-				time.Sleep(time.Duration(cfg.RetryDelaySec) * time.Second)
+			if attempt < rtCfg().RetryAttempts-1 {
+				time.Sleep(time.Duration(rtCfg().RetryDelaySec) * time.Second)
 			}
 			continue
 		}
@@ -502,7 +502,7 @@ type ProbeResult struct {
 // probeGemini 直接调 Gemini StreamGenerate（绕过限流），返回详细诊断。
 // 不写 db、不消耗限流 slot。
 func probeGemini(prompt, proxyURL string) ProbeResult {
-	res := ProbeResult{Impersonate: cfg.Impersonate}
+	res := ProbeResult{Impersonate: rtCfg().Impersonate}
 
 	inner := make([]interface{}, 80)
 	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
@@ -534,7 +534,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	reqid := time.Now().Unix() % 1000000
 	endpoint := fmt.Sprintf(
 		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
-		cfg.GeminiBL, reqid,
+		rtCfg().GeminiBL, reqid,
 	)
 
 	cookieStr, sapisid := loadCookie()

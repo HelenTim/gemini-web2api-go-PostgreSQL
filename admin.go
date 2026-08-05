@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,9 +25,9 @@ func newSessionToken() string {
 }
 
 // authOK accepts either:
-//   1. Cookie gemini_admin_session matching a valid sessions row
-//   2. Authorization: Bearer <admin_token>
-//   3. ?token=<admin_token> query param (for embedded HTML <a href> use)
+//  1. Cookie gemini_admin_session matching a valid sessions row
+//  2. Authorization: Bearer <admin_token>
+//  3. ?token=<admin_token> query param (for embedded HTML <a href> use)
 func authOK(r *http.Request) bool {
 	if cfg.AdminToken == "" {
 		return true // unauthenticated mode (only safe behind 127.0.0.1)
@@ -499,7 +500,8 @@ func atoiDefault(s string, d int) int {
 }
 
 // /admin/api/apikey — GET shows current key + lock status; POST rotate;
-//   PATCH sets a custom key.
+//
+//	PATCH sets a custom key.
 func handleAdminAPIKey(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -605,4 +607,46 @@ func handleAdminTest(w http.ResponseWriter, r *http.Request) {
 	res.UseDirect = useDirect
 
 	writeJSON(w, 200, res)
+}
+
+// handleAdminConfig 读写运行时配置。GET 返回当前值 + 各项允许范围，
+// PUT 校验后立刻生效并持久化到 kv。
+func handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, 200, map[string]interface{}{
+			"config": rtCfg(),
+			"models": modelNamesSorted(),
+			// 部署期配置只读展示，改这些要动 docker-compose.yml 并重启
+			"deploy": map[string]interface{}{
+				"host":        cfg.Host,
+				"port":        cfg.Port,
+				"db_path":     cfg.DBPath,
+				"cookie_file": cfg.CookieFile,
+				"admin_auth":  cfg.AdminToken != "",
+			},
+		})
+	case http.MethodPut:
+		var next RuntimeConfig
+		if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid JSON: " + err.Error()})
+			return
+		}
+		if err := saveRuntimeConfig(next); err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]interface{}{"ok": true, "config": rtCfg()})
+	default:
+		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func modelNamesSorted() []string {
+	var names []string
+	for n := range availableModels() {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }

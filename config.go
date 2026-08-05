@@ -7,8 +7,8 @@ import (
 )
 
 type Config struct {
-	Port            int    `json:"port"`
-	Host            string `json:"host"`
+	Port           int    `json:"port"`
+	Host           string `json:"host"`
 	RetryAttempts  int    `json:"retry_attempts"`
 	RetryDelaySec  int    `json:"retry_delay_sec"`
 	RequestTimeout int    `json:"request_timeout_sec"`

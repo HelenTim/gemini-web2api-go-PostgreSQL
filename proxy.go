@@ -9,21 +9,21 @@ import (
 )
 
 type Proxy struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	Enabled    bool   `json:"enabled"`
-	Weight     int    `json:"weight"`
-	FailCount  int    `json:"fail_count"`
-	LastUsed   int64  `json:"last_used"`
-	LastError  string `json:"last_error"`
-	CreatedAt  int64  `json:"created_at"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Enabled   bool   `json:"enabled"`
+	Weight    int    `json:"weight"`
+	FailCount int    `json:"fail_count"`
+	LastUsed  int64  `json:"last_used"`
+	LastError string `json:"last_error"`
+	CreatedAt int64  `json:"created_at"`
 }
 
 var (
-	proxyMu      sync.RWMutex
-	proxyCache   []Proxy
-	proxyCursor  uint64
+	proxyMu     sync.RWMutex
+	proxyCache  []Proxy
+	proxyCursor uint64
 )
 
 // loadProxies refreshes the in-memory proxy list from DB.
