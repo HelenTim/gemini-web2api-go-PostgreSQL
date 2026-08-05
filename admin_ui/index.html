@@ -17,18 +17,22 @@
     --g-pink: #D96570;
     --g-sweep: linear-gradient(90deg, #4285F4 0%, #9B72CB 55%, #D96570 100%);
 
-    --bg: #131314;
-    --surface: #1E1F20;
-    --surface-hi: #282A2C;
-    --surface-press: #333537;
-    --outline: #444746;
-    --outline-soft: #2D2F31;
+    /* Gemini 亮色：白底 + 浅蓝灰 surface，选中态是 Material 3 的
+       secondary-container(#D3E3FD) 配 #0B57D0 文字 */
+    --bg: #FFFFFF;
+    --surface: #F7F9FC;
+    --surface-hi: #EDF1F7;
+    --surface-press: #DDE3EA;
+    --outline: #C4C7C5;
+    --outline-soft: #E3E6EA;
+    --nav-on: #D3E3FD;
+    --nav-on-fg: #0B57D0;
 
-    --text: #E3E3E3;
-    --muted: #9AA0A6;
-    --ok: #81C995;
-    --fail: #F28B82;
-    --warn: #FDD663;
+    --text: #1F1F1F;
+    --muted: #5F6368;
+    --ok: #188038;
+    --fail: #C5221F;
+    --warn: #B06000;
 
     --r-card: 16px;
     --r-pill: 999px;
@@ -69,7 +73,7 @@
     transition: background .15s, color .15s;
   }
   .sidebar nav button:hover { background: var(--surface-hi); color: var(--text); }
-  .sidebar nav button.active { background: #0B57D0; color: #fff; }
+  .sidebar nav button.active { background: var(--nav-on); color: var(--nav-on-fg); font-weight: 500; }
   .sidebar nav button:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
   .side-foot { margin-top: auto; padding: 12px 16px; color: var(--muted); font-size: 12px; }
 
@@ -79,6 +83,23 @@
     margin-bottom: 14px; display: flex; align-items: center;
     justify-content: space-between; gap: 12px;
   }
+
+  /* ── 定高列表 ────────────────────────────────────────────────────────
+     列表页撑满视口而不是被数据撑开：表头固定、中间滚动、分页钉在底部。
+     这样翻页、筛选、数据多少都不会让页面高度跳动。
+     min-height:0 是必须的——flex 子项默认 min-height:auto，会被内容撑破
+     而不是产生滚动。 */
+  .page-fill { display: flex; flex-direction: column;
+               height: calc(100vh - 56px); margin-bottom: 0; }
+  .table-scroll { flex: 1; min-height: 0; overflow: auto;
+                  border: 1px solid var(--outline-soft); border-radius: 12px; }
+  .table-scroll table { font-size: 13px; }
+  .table-scroll thead th { position: sticky; top: 0; z-index: 1;
+    background: var(--surface); border-bottom: 1px solid var(--outline); }
+  .pager { display: flex; align-items: center; justify-content: space-between;
+           gap: 12px; padding-top: 14px; flex-wrap: wrap; font-size: 13px; }
+  .pager-btns { display: flex; align-items: center; gap: 6px; }
+  .pager .btn[disabled] { opacity: .4; cursor: default; }
 
   /* 图表容器必须有确定高度：Chart.js 配了 maintainAspectRatio:false 时会去
      填满父元素，父元素若又由 canvas 撑开就会形成反馈循环、每次重绘都变高。
@@ -90,7 +111,7 @@
 
   /* ── 卡片 ───────────────────────────────────────────────────────────── */
   .panel, .card {
-    background: var(--surface); border: 1px solid var(--outline-soft);
+    background: var(--bg); border: 1px solid var(--outline-soft);
     border-radius: var(--r-card); padding: 20px 22px; margin-bottom: 16px;
   }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -100,6 +121,7 @@
   .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
   .kpi { background: var(--surface); border: 1px solid var(--outline-soft);
          border-radius: var(--r-card); padding: 16px 18px; }
+  .kpi .value { color: var(--text); }
   .kpi .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
   .kpi .value { font-size: 26px; font-weight: 400; letter-spacing: -.02em; }
   .kpi .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
@@ -110,7 +132,7 @@
        padding: 8px 10px; border-bottom: 1px solid var(--outline-soft); }
   td { padding: 10px; border-bottom: 1px solid var(--outline-soft); vertical-align: top; }
   tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover { background: rgba(255,255,255,.025); }
+  tbody tr:hover { background: rgba(11,87,208,.04); }
   .empty { text-align: center; color: var(--muted); padding: 28px 0; }
 
   /* ── 按钮 ───────────────────────────────────────────────────────────── */
@@ -124,7 +146,7 @@
   .btn.muted { background: var(--surface-hi); color: var(--text); }
   .btn.muted:hover { background: var(--surface-press); }
   .btn.danger { background: transparent; color: var(--fail); box-shadow: inset 0 0 0 1px var(--outline); }
-  .btn.danger:hover { background: rgba(242,139,130,.12); }
+  .btn.danger:hover { background: #FCE8E6; }
   .controls { display: flex; gap: 8px; align-items: center; }
   .controls button { background: var(--surface-hi); color: var(--text); padding: 6px 14px; }
   .controls button:hover { background: var(--surface-press); }
@@ -140,8 +162,8 @@
   /* ── 徽标 ───────────────────────────────────────────────────────────── */
   .badge { display: inline-block; padding: 2px 10px; border-radius: var(--r-pill);
            font-size: 11.5px; background: var(--surface-hi); color: var(--muted); }
-  .badge.ok { background: rgba(129,201,149,.16); color: var(--ok); }
-  .badge.fail { background: rgba(242,139,130,.16); color: var(--fail); }
+  .badge.ok { background: #E6F4EA; color: var(--ok); }
+  .badge.fail { background: #FCE8E6; color: var(--fail); }
   .badge.muted { background: var(--surface-hi); color: var(--muted); }
 
   .pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
@@ -188,7 +210,8 @@
   .slot-note.danger { color: var(--fail); }
 
   /* ── 登录 ───────────────────────────────────────────────────────────── */
-  .login-box { max-width: 380px; margin: 18vh auto; background: var(--surface);
+  .login-box { max-width: 380px; margin: 18vh auto; background: var(--bg);
+               box-shadow: 0 1px 3px rgba(60,64,67,.16), 0 4px 16px rgba(60,64,67,.1);
                border: 1px solid var(--outline-soft); border-radius: 24px; padding: 32px; }
   .login-box h1 { font-size: 19px; font-weight: 400; margin-bottom: 20px;
                   display: flex; align-items: center; gap: 10px; }
@@ -196,9 +219,10 @@
   .login-box .btn { width: 100%; text-align: center; }
 
   /* ── 弹窗 ───────────────────────────────────────────────────────────── */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6);
+  .modal-overlay { position: fixed; inset: 0; background: rgba(32,33,36,.5);
                    display: flex; align-items: center; justify-content: center; z-index: 50; }
-  .modal { background: var(--surface); border: 1px solid var(--outline-soft);
+  .modal { background: var(--bg); box-shadow: 0 8px 32px rgba(60,64,67,.24);
+           border: 1px solid var(--outline-soft);
            border-radius: 24px; padding: 26px; width: min(460px, 92vw); }
   .modal h3 { font-size: 17px; font-weight: 400; margin-bottom: 8px; }
 
@@ -363,7 +387,7 @@ const pages = {
 
   requests: async () => {
     return `
-      <div class="panel">
+      <div class="panel page-fill">
         <h2>请求记录
           <span class="controls">
             <select id="reqStatus">
@@ -372,17 +396,25 @@ const pages = {
               <option value="fail">失败</option>
             </select>
             <select id="reqModel"><option value="">全部模型</option></select>
+            <select id="reqSize">
+              <option value="25">每页 25</option>
+              <option value="50" selected>每页 50</option>
+              <option value="100">每页 100</option>
+              <option value="200">每页 200</option>
+            </select>
             <button onclick="loadReqs()">刷新</button>
           </span>
         </h2>
-        <table id="reqTable">
-          <thead><tr>
-            <th>时间</th><th>模型</th><th>实际模型</th><th>代理</th><th>状态</th>
-            <th>首字延迟</th><th>总用时</th><th>输入 Token</th><th>输出 Token</th><th>接口</th>
-          </tr></thead>
-          <tbody><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
-        </table>
-        <div style="margin-top: 12px; text-align: center;" id="reqPager"></div>
+        <div class="table-scroll">
+          <table id="reqTable">
+            <thead><tr>
+              <th>时间</th><th>模型</th><th>实际模型</th><th>代理</th><th>状态</th>
+              <th>首字延迟</th><th>总用时</th><th>输入 Token</th><th>输出 Token</th><th>接口</th>
+            </tr></thead>
+            <tbody><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="pager" id="reqPager"></div>
       </div>
     `;
   },
@@ -557,11 +589,15 @@ async function loadChart(range = '24h') {
 }
 
 let reqOffset = 0;
-const REQ_PAGE = 50;
+// 每页条数由「每页 N」下拉决定；页面还没渲染时退回 50
+function reqPageSize() {
+  const el = document.getElementById('reqSize');
+  return el ? parseInt(el.value, 10) : 50;
+}
 async function loadReqs() {
   const status = document.getElementById('reqStatus')?.value || '';
   const model = document.getElementById('reqModel')?.value || '';
-  const url = `/admin/api/requests?limit=${REQ_PAGE}&offset=${reqOffset}` +
+  const url = `/admin/api/requests?limit=${reqPageSize()}&offset=${reqOffset}` +
               (status ? '&status=' + status : '') +
               (model ? '&model=' + encodeURIComponent(model) : '');
   const data = await api(url);
@@ -582,10 +618,25 @@ async function loadReqs() {
         ${r.error ? '<div class="pre" style="color:#f87171; margin-top:4px"><b>错误：</b> ' + escapeHtml(r.error) + '</div>' : ''}
       </td>
     </tr>`).join('') || '<tr><td colspan="10" class="empty">还没有请求记录</td></tr>';
+  const size = reqPageSize();
+  const total = data.total || 0;
+  const page = Math.floor(reqOffset / size) + 1;
+  const pages = Math.max(Math.ceil(total / size), 1);
+  const from = total ? reqOffset + 1 : 0;
+  const to = Math.min(reqOffset + size, total);
   document.getElementById('reqPager').innerHTML = `
-    <button class="btn muted" ${reqOffset === 0 ? 'disabled' : ''} onclick="reqOffset=Math.max(0,reqOffset-${REQ_PAGE});loadReqs()">← 上一页</button>
-    <span style="margin: 0 12px; color: var(--muted)">${reqOffset+1}-${Math.min(reqOffset+REQ_PAGE, data.total)} / 共 ${data.total} 条</span>
-    <button class="btn muted" ${reqOffset+REQ_PAGE >= data.total ? 'disabled' : ''} onclick="reqOffset+=${REQ_PAGE};loadReqs()">下一页 →</button>
+    <span class="muted">${from}-${to} / 共 ${total} 条</span>
+    <span class="pager-btns">
+      <button class="btn muted" ${reqOffset === 0 ? 'disabled' : ''}
+        onclick="reqOffset=0;loadReqs()">最前</button>
+      <button class="btn muted" ${reqOffset === 0 ? 'disabled' : ''}
+        onclick="reqOffset=Math.max(0,reqOffset-${size});loadReqs()">上一页</button>
+      <span class="muted" style="min-width:80px;text-align:center">第 ${page} / ${pages} 页</span>
+      <button class="btn muted" ${to >= total ? 'disabled' : ''}
+        onclick="reqOffset+=${size};loadReqs()">下一页</button>
+      <button class="btn muted" ${to >= total ? 'disabled' : ''}
+        onclick="reqOffset=${(pages-1)*size};loadReqs()">最后</button>
+    </span>
   `;
   // populate model dropdown from current page (best-effort)
   const sel = document.getElementById('reqModel');
@@ -1058,6 +1109,8 @@ async function switchPage(name) {
   if (name === 'requests') {
     reqOffset = 0;
     document.getElementById('reqStatus').onchange = () => { reqOffset = 0; loadReqs(); };
+    document.getElementById('reqModel').onchange = () => { reqOffset = 0; loadReqs(); };
+    document.getElementById('reqSize').onchange = () => { reqOffset = 0; loadReqs(); };
     await loadReqs();
   }
   if (name === 'settings') {
