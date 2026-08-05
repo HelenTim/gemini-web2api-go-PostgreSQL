@@ -7,8 +7,8 @@ import (
 
 // 确认每个模型名解析出的 hex id 和 header 值正确。
 func TestModelHeader(t *testing.T) {
-	cfg.CookieFile = "dummy-cookie.txt" // 让 3.1 Pro 可选，见 TestProHiddenWithoutCookie
-	defer func() { cfg.CookieFile = "" }()
+	cookieRuntime.Store("SAPISID=dummy") // 让 3.1 Pro 可选，见 TestProHiddenWithoutCookie
+	defer cookieRuntime.Store("")
 
 	cases := []struct{ name, wantHex string }{
 		{"gemini-3.6-flash", hexFlash36},
@@ -230,7 +230,7 @@ func TestExtractUpstreamModel(t *testing.T) {
 // 没配 cookie 时 3.1 Pro 必然被静默降级成 Flash-Lite，不如干脆不暴露：
 // 让客户端在选型时就拿到明确错误，而不是拿到一个"成功但其实不是 Pro"的回复。
 func TestProHiddenWithoutCookie(t *testing.T) {
-	cfg.CookieFile = ""
+	cookieRuntime.Store("")
 	if _, ok := availableModels()["gemini-3.1-pro"]; ok {
 		t.Error("无 cookie 时不该暴露 3.1 Pro")
 	}
@@ -243,12 +243,13 @@ func TestProHiddenWithoutCookie(t *testing.T) {
 	}
 	// 错误信息要说清为什么、以及怎么办，不能只是 unknown model
 	if !strings.Contains(err.Error(), "cookie") ||
-		!strings.Contains(err.Error(), "downgraded") {
+		!strings.Contains(err.Error(), "downgraded") ||
+		!strings.Contains(err.Error(), "admin panel") {
 		t.Errorf("错误信息没解释原因和解法: %v", err)
 	}
 
-	cfg.CookieFile = "dummy-cookie.txt"
-	defer func() { cfg.CookieFile = "" }()
+	cookieRuntime.Store("SAPISID=dummy")
+	defer cookieRuntime.Store("")
 	if _, ok := availableModels()["gemini-3.1-pro"]; !ok {
 		t.Error("配了 cookie 时应暴露 3.1 Pro")
 	}

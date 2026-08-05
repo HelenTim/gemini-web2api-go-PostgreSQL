@@ -83,7 +83,8 @@ func resolveModel(modelName string) (string, ModelConfig, error) {
 		if _, exists := Models[modelName]; exists && !hasCookie() {
 			return "", ModelConfig{}, fmt.Errorf(
 				"%s is unavailable without a Google account cookie: anonymous requests for it "+
-					"are silently downgraded to 3.5 Flash-Lite. Start with --cookie-file to enable it",
+					"are silently downgraded to 3.5 Flash-Lite. Add a cookie in the admin panel "+
+					"(Settings) or via --cookie-file to enable it",
 				modelName)
 		}
 		return "", ModelConfig{}, fmt.Errorf("unknown model: %s", modelName)
