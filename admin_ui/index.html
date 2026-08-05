@@ -101,10 +101,20 @@
   .side-foot { margin-top: auto; padding: 12px 16px 2px; font-size: 12px; color: var(--muted); }
   .side-foot .sf-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
   .side-foot .sf-row b { color: var(--text-2); font-weight: 500; }
-  .side-foot a { color: var(--muted); text-decoration: none; }
-  .side-foot a:hover { color: var(--nav-on-fg); }
   .sf-sep { height: 1px; background: var(--outline-soft); margin: 9px 0; }
-  .sidebar.collapsed .side-foot { display: none; }
+  .logout-btn {
+    all: unset; box-sizing: border-box; cursor: pointer; width: 100%;
+    display: flex; align-items: center; gap: 13px; padding: 9px 14px;
+    border-radius: var(--r-pill); color: var(--muted); font-size: 13px;
+    font-family: var(--sans); transition: background .15s, color .15s;
+  }
+  .logout-btn svg { width: 18px; height: 18px; flex: none; fill: currentColor; }
+  .logout-btn:hover { background: var(--fail-bg); color: var(--fail); }
+  .logout-btn:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
+  /* 折叠时状态行藏起来，但退出按钮必须留着——否则收起侧栏就没法登出了 */
+  .sidebar.collapsed .side-foot { padding: 12px 8px 2px; }
+  .sidebar.collapsed #sideStat, .sidebar.collapsed .sf-sep { display: none; }
+  .sidebar.collapsed .logout-btn { justify-content: center; padding: 9px 0; }
 
   /* ── 内容区 ─────────────────────────────────────────────────────────── */
   .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -371,7 +381,7 @@ const pages = {
         <div class="stack">
         <div class="panel">
           <h2>距离封禁红线
-            <span class="controls"><button onclick="switchPage('dashboard')">刷新</button></span>
+            <span class="controls"><button onclick="refreshPage()">刷新</button></span>
           </h2>
           <div class="slot-scroll">
             ${(usage.items || []).map(u => {
@@ -975,7 +985,7 @@ async function addProxy() {
   const j = await r.json();
   if (j.error) return flash('添加失败：' + j.error);
   flash('代理已添加');
-  await switchPage('proxies');
+  await refreshPage();
 }
 async function delProxy(id) {
   const ok = await modalConfirm({
@@ -987,19 +997,27 @@ async function delProxy(id) {
   if (!ok) return;
   await api('/admin/api/proxies/' + id, { method: 'DELETE' });
   flash('已删除');
-  await switchPage('proxies');
+  await refreshPage();
 }
 async function toggleProxy(id) {
   await api('/admin/api/proxies/' + id + '/toggle', { method: 'POST' });
-  await switchPage('proxies');
+  await refreshPage();
 }
 async function resetProxy(id) {
   await api('/admin/api/proxies/' + id + '/reset', { method: 'POST' });
   flash('已重置失败计数');
-  await switchPage('proxies');
+  await refreshPage();
 }
 async function doLogout() {
+  const ok = await modalConfirm({
+    title: '退出登录',
+    desc: '退出后需要重新输入管理员 token 才能进来。服务本身不受影响，API 照常提供。',
+    confirmText: '退出',
+    danger: true,
+  });
+  if (!ok) return;
   await api('/admin/api/logout', { method: 'POST' });
+  currentPage = null;
   renderLogin();
 }
 
@@ -1085,7 +1103,7 @@ async function rotateKey() {
   if (!ok) return;
   await api('/admin/api/apikey', { method: 'POST' });
   flash('已生成新 Key');
-  await switchPage('settings');
+  await refreshPage();
   const el = document.getElementById('apiKeyView');
   if (el) { el.type = 'text'; }
 }
@@ -1106,7 +1124,7 @@ async function customKey() {
     body: JSON.stringify({ key: k }),
   });
   const j = await r.json();
-  if (j.ok) { flash('Key 已更新'); await switchPage('settings'); }
+  if (j.ok) { flash('Key 已更新'); await refreshPage(); }
   else flash('错误：' + (j.error || '未知错误'));
 }
 
@@ -1232,18 +1250,38 @@ function modalForm({ title, desc, fields, submitText = '提交' }) {
 
 // ─── Routing / shell ────────────────────────────────────────────────────────
 
-async function switchPage(name) {
+let currentPage = null;
+let pageSeq = 0;
+
+// 点已经选中的导航项直接忽略：重新拉一遍数据、整块内容闪一下再画回原样，
+// 用户看到的只是抖动。要重新取数有「刷新」按钮，走 refreshPage()。
+async function switchPage(name, force = false) {
+  if (!force && name === currentPage) return;
+  const seq = ++pageSeq;
+  currentPage = name;
+
   document.querySelectorAll('nav button').forEach(b =>
     b.classList.toggle('active', b.dataset.page === name));
   const titleEl = document.getElementById('pageTitle');
   if (titleEl) titleEl.textContent = PAGE_TITLES[name] || name;
   const main = document.getElementById('main');
-  main.innerHTML = '<div class="empty">加载中...</div>';
+
+  // 旧内容先留着，超过 200ms 还没好才显示占位——快的时候完全不闪
+  const slow = setTimeout(() => {
+    if (seq === pageSeq) main.innerHTML = '<div class="empty">加载中…</div>';
+  }, 200);
+  let html;
   try {
-    main.innerHTML = await pages[name]();
+    html = await pages[name]();
   } catch (e) {
-    main.innerHTML = '<div class="empty">' + e.message + '</div>'; return;
+    clearTimeout(slow);
+    if (seq === pageSeq) main.innerHTML = '<div class="empty">' + e.message + '</div>';
+    return;
   }
+  clearTimeout(slow);
+  if (seq !== pageSeq) return;   // 期间又点了别的页，丢弃这次结果
+  main.innerHTML = html;
+
   if (name === 'dashboard') {
     await loadChart('24h');
     document.getElementById('rangeSel').onchange = (e) => loadChart(e.target.value);
@@ -1262,6 +1300,9 @@ async function switchPage(name) {
   }
 }
 
+// 主动重新拉当前页的数据（「刷新」按钮、增删改之后回填）
+function refreshPage() { return switchPage(currentPage, true); }
+
 // 侧栏图标（Material Symbols 风格的简化路径，内联避免外部依赖）
 const ICONS = {
   dashboard: '<path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>',
@@ -1269,6 +1310,7 @@ const ICONS = {
   proxies: '<path d="M12 2a2.5 2.5 0 011 4.79V9h4a2 2 0 012 2v1.21a2.5 2.5 0 11-2 0V11h-4v1.21a2.5 2.5 0 11-2 0V11H7v1.21a2.5 2.5 0 11-2 0V11a2 2 0 012-2h4V6.79A2.5 2.5 0 0112 2z"/>',
   settings: '<path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>',
   menu: '<path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>',
+  logout: '<path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4a2 2 0 00-2 2v14a2 2 0 002 2h8v-2H4V5z"/>',
 };
 const NAV = [
   ['dashboard', '概览'],
@@ -1306,7 +1348,10 @@ function renderShell() {
       <div class="side-foot">
         <div id="sideStat"></div>
         <div class="sf-sep"></div>
-        <a href="#" onclick="doLogout();return false">退出登录</a>
+        <button class="logout-btn" onclick="doLogout()" title="退出登录">
+          <svg viewBox="0 0 24 24">${ICONS.logout}</svg>
+          <span class="nav-label">退出登录</span>
+        </button>
       </div>
     </aside>
     <div class="content">
