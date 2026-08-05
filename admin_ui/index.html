@@ -80,6 +80,14 @@
     justify-content: space-between; gap: 12px;
   }
 
+  /* 图表容器必须有确定高度：Chart.js 配了 maintainAspectRatio:false 时会去
+     填满父元素，父元素若又由 canvas 撑开就会形成反馈循环、每次重绘都变高。
+     用绝对定位把 canvas 从文档流里摘出来，循环就断了。 */
+  .chart-wrap { position: relative; height: 300px; width: 100%; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important;
+                       height: 100% !important; }
+  @media (max-width: 900px) { .chart-wrap { height: 220px; } }
+
   /* ── 卡片 ───────────────────────────────────────────────────────────── */
   .panel, .card {
     background: var(--surface); border: 1px solid var(--outline-soft);
@@ -257,7 +265,7 @@ const pages = {
             </select>
           </span>
         </h2>
-        <canvas id="chartReq"></canvas>
+        <div class="chart-wrap"><canvas id="chartReq"></canvas></div>
       </div>
       <div class="panel">
         <h2>连通性诊断
