@@ -157,7 +157,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prompt := messagesToPrompt(messages, tools)
+	prompt := messagesToPrompt(messages, tools, req["tool_choice"])
 	if strings.TrimSpace(prompt) == "" {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
 		return
@@ -351,7 +351,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prompt := messagesToPrompt(messages, tools)
+	prompt := messagesToPrompt(messages, tools, req["tool_choice"])
 	if strings.TrimSpace(prompt) == "" {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
 		return
@@ -453,7 +453,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 			"status": "completed",
 			"model":  modelName,
 			"output": output,
-			"usage": buildUsage(prompt, text, true),
+			"usage":  buildUsage(prompt, text, true),
 		}
 		writeEvent("response.completed", map[string]interface{}{
 			"type":     "response.completed",
@@ -469,6 +469,6 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		"status":     "completed",
 		"model":      modelName,
 		"output":     output,
-		"usage": buildUsage(prompt, text, true),
+		"usage":      buildUsage(prompt, text, true),
 	})
 }

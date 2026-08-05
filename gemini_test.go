@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // 确认每个模型名解析出的 hex id 和 header 值正确。
 func TestModelHeader(t *testing.T) {
@@ -40,6 +43,7 @@ func TestModelHeader(t *testing.T) {
 		t.Error("unknown model should error")
 	}
 }
+
 // 抓包里真实的"被拒绝"响应：只有结束帧，没有内容帧（216 字节）。
 // 注意结束帧里带 BardErrorInfo[1096]，但正常响应的结束帧同样带这个码，
 // 所以判据只能是"有没有内容帧"。
@@ -91,5 +95,54 @@ func TestUsageUsesTokenizer(t *testing.T) {
 	}
 	if _, ok := r["prompt_tokens"]; ok {
 		t.Error("responses API 不应出现 prompt_tokens 字段")
+	}
+}
+
+func TestToolChoice(t *testing.T) {
+	for _, c := range []struct {
+		in         interface{}
+		mode, name string
+	}{
+		{nil, "auto", ""},
+		{"auto", "auto", ""},
+		{"none", "none", ""},
+		{"required", "required", ""},
+		{map[string]interface{}{"type": "function",
+			"function": map[string]interface{}{"name": "get_weather"}}, "required", "get_weather"},
+		{"garbage", "auto", ""},
+	} {
+		m, n := parseToolChoice(c.in)
+		if m != c.mode || n != c.name {
+			t.Errorf("%v -> (%s,%s) want (%s,%s)", c.in, m, n, c.mode, c.name)
+		}
+	}
+
+	tools := []map[string]interface{}{
+		{"type": "function", "function": map[string]interface{}{"name": "get_weather"}},
+		{"type": "function", "function": map[string]interface{}{"name": "send_email"}},
+	}
+	msgs := []map[string]interface{}{{"role": "user", "content": "hi"}}
+
+	// none：工具定义完全不进 prompt
+	if p := messagesToPrompt(msgs, tools, "none"); strings.Contains(p, "get_weather") {
+		t.Errorf("tool_choice=none 不该注入工具定义: %s", p)
+	}
+	// required：必须出现强制措辞
+	p := messagesToPrompt(msgs, tools, "required")
+	if !strings.Contains(p, "MUST call one of the tools") {
+		t.Errorf("tool_choice=required 缺强制指令: %s", p)
+	}
+	// 指定函数：只留该函数，且点名它
+	p = messagesToPrompt(msgs, tools, map[string]interface{}{"type": "function",
+		"function": map[string]interface{}{"name": "get_weather"}})
+	if !strings.Contains(p, `MUST call the tool "get_weather"`) {
+		t.Errorf("指定函数缺强制指令: %s", p)
+	}
+	if strings.Contains(p, "send_email") {
+		t.Errorf("指定函数时不该带上其它工具: %s", p)
+	}
+	// auto：保持原来的宽松措辞
+	if p := messagesToPrompt(msgs, tools, "auto"); !strings.Contains(p, "when needed") {
+		t.Errorf("auto 应保持宽松措辞: %s", p)
 	}
 }

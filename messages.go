@@ -22,9 +22,9 @@ func randHex(n int) string {
 }
 
 type ToolCall struct {
-	ID       string             `json:"id"`
-	Type     string             `json:"type"`
-	Function ToolCallFunction   `json:"function"`
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
 }
 
 type ToolCallFunction struct {
@@ -35,10 +35,17 @@ type ToolCallFunction struct {
 // messagesToPrompt converts OpenAI messages[] (+ optional tools[]) to a single
 // prompt string for Gemini. Tool schemas are embedded as a system instruction
 // telling the model to emit ```tool_call``` blocks.
-func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{}) string {
+//
+// toolChoice 是 OpenAI 的 tool_choice 字段（"none"/"auto"/"required" 或
+// {"type":"function","function":{"name":...}}）。上游没有协议层的工具调用，
+// 只能把约束写进指令。"required" 尤其必要：实测 Gemini 对自己能回答的问题
+// （查天气之类）会直接作答而不调工具，不强制就拿不到 tool_call。
+func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{},
+	toolChoice interface{}) string {
 	var parts []string
 
-	if len(tools) > 0 {
+	mode, forced := parseToolChoice(toolChoice)
+	if len(tools) > 0 && mode != "none" {
 		var defs []map[string]interface{}
 		for _, tool := range tools {
 			fn := tool
@@ -47,20 +54,36 @@ func messagesToPrompt(messages []map[string]interface{}, tools []map[string]inte
 					fn = f
 				}
 			}
+			name := getStr(fn, "name")
+			if forced != "" && name != forced {
+				continue // 指定了函数名，其余不进 prompt
+			}
 			defs = append(defs, map[string]interface{}{
-				"name":        getStr(fn, "name"),
+				"name":        name,
 				"description": getStr(fn, "description"),
 				"parameters":  fn["parameters"],
 			})
 		}
 		if len(defs) > 0 {
 			defsJSON, _ := json.MarshalIndent(defs, "", "  ")
+			rule := "Only use tool_call blocks when needed."
+			switch {
+			case forced != "":
+				rule = fmt.Sprintf(
+					"You MUST call the tool %q. Reply with the tool_call block and nothing "+
+						"else — do not answer the question yourself, even if you know the answer.",
+					forced)
+			case mode == "required":
+				rule = "You MUST call one of the tools above. Reply with the tool_call block " +
+					"and nothing else — do not answer the question yourself, even if you " +
+					"know the answer."
+			}
 			parts = append(parts, fmt.Sprintf(
 				"[System instruction]: You have access to tools. "+
 					"To call a tool, respond with:\n"+
 					"```tool_call\n{\"name\": \"func_name\", \"arguments\": {...}}\n```\n"+
-					"Only use tool_call blocks when needed.\n\n"+
-					"Available tools:\n%s", string(defsJSON),
+					"%s\n\n"+
+					"Available tools:\n%s", rule, string(defsJSON),
 			))
 		}
 	}
@@ -173,4 +196,25 @@ func parseToolCalls(text string) (string, []ToolCall) {
 	}
 	clean := toolCallRe.ReplaceAllString(text, "")
 	return strings.TrimSpace(clean), toolCalls
+}
+
+// parseToolChoice 解析 OpenAI 的 tool_choice。
+// 返回 (mode, forcedName)：mode ∈ {"auto","none","required"}；
+// forcedName 非空表示客户端点名了某个函数。
+func parseToolChoice(tc interface{}) (string, string) {
+	switch v := tc.(type) {
+	case string:
+		switch v {
+		case "none", "required", "auto":
+			return v, ""
+		}
+	case map[string]interface{}:
+		// {"type":"function","function":{"name":"..."}}
+		if f, ok := v["function"].(map[string]interface{}); ok {
+			if n := getStr(f, "name"); n != "" {
+				return "required", n
+			}
+		}
+	}
+	return "auto", ""
 }
