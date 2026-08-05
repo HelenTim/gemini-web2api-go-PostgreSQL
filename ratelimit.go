@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -116,13 +117,41 @@ func slotUsage(proxyID int64) SlotUsage {
 }
 
 // allSlotUsage 返回所有 slot 的用量快照（直连 + 全部代理）。
+// allSlotUsage 列出当前**可被调度到**的所有 IP slot，包括一次都还没用过的。
+//
+// 只返回 slots map 里已存在的是不够的：那个 map 是首次用到时才懒创建的，
+// 服务刚重启时是空的，面板上「距离封禁红线」会整块空白——而那恰恰是部署时
+// 最该盯的一屏。这里按 acquireSlot 的同一套规则枚举：配了代理就只列代理
+// （代理存在时不会退回直连），否则列直连。
 func allSlotUsage() []SlotUsage {
+	seen := map[int64]bool{}
+	var ids []int64
+
+	proxyMu.RLock()
+	for _, p := range proxyCache {
+		if p.Enabled {
+			ids = append(ids, p.ID)
+			seen[p.ID] = true
+		}
+	}
+	hasProxies := len(ids) > 0
+	proxyMu.RUnlock()
+
+	if !hasProxies {
+		ids = append(ids, 0)
+		seen[0] = true
+	}
+
+	// 已有计数但已从池中移除/禁用的 slot 也带上，否则它的用量会凭空消失
 	slotsMu.RLock()
-	ids := make([]int64, 0, len(slots))
 	for id := range slots {
-		ids = append(ids, id)
+		if !seen[id] && (hasProxies == (id != 0)) {
+			ids = append(ids, id)
+		}
 	}
 	slotsMu.RUnlock()
+
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	out := make([]SlotUsage, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, slotUsage(id))

@@ -7,234 +7,300 @@
 <!-- Chart.js 随二进制一起 embed，不走 CDN：内网/离线部署也要能开面板 -->
 <script src="/admin/chart.umd.min.js"></script>
 <style>
-  /* ── Gemini 设计语言 ────────────────────────────────────────────────────
-     取自 gemini.google.com 本体：Material 3 的暗色 surface 阶梯、大圆角、
-     pill 形导航项，以及品牌的蓝→紫→粉三色。三色只用在一个地方（IP 红线
-     进度条），其余保持安静。字体走系统栈——面板要能离线开，不引外部字体。 */
+  /* ── Gemini 设计语言（亮色）────────────────────────────────────────────
+     照 gemini.google.com 本体：页面是带蓝调的白(#F8FAFD)，卡片纯白**不描边**，
+     靠底色反差和 16px 圆角分离——满屏描边会让页面变成一堆盒子，这是最不像
+     Gemini 的做法。侧栏与页面同色、无分隔线，可折叠；选中态是 Material 3 的
+     secondary-container(#D3E3FD) 配 #0B57D0。
+     品牌三色（蓝→紫→粉）全站只出现在一个地方：那条封禁红线轨道。 */
   :root {
     --g-blue: #4285F4;
     --g-purple: #9B72CB;
     --g-pink: #D96570;
-    --g-sweep: linear-gradient(90deg, #4285F4 0%, #9B72CB 55%, #D96570 100%);
+    --g-sweep: linear-gradient(90deg, #4285F4 0%, #9B72CB 58%, #D96570 100%);
 
-    /* Gemini 亮色：白底 + 浅蓝灰 surface，选中态是 Material 3 的
-       secondary-container(#D3E3FD) 配 #0B57D0 文字 */
-    --bg: #FFFFFF;
-    --surface: #F7F9FC;
-    --surface-hi: #EDF1F7;
-    --surface-press: #DDE3EA;
-    --outline: #C4C7C5;
-    --outline-soft: #E3E6EA;
+    --bg: #F8FAFD;
+    --card: #FFFFFF;
+    --surface-hi: #EFF3FA;
+    --surface-press: #E2E8F1;
+    --outline: #D5DAE1;
+    --outline-soft: #E8ECF1;
     --nav-on: #D3E3FD;
     --nav-on-fg: #0B57D0;
 
     --text: #1F1F1F;
+    --text-2: #3C4043;
     --muted: #5F6368;
-    --ok: #188038;
-    --fail: #C5221F;
-    --warn: #B06000;
+    --ok: #146C2E;
+    --ok-bg: #E6F4EA;
+    --fail: #B3261E;
+    --fail-bg: #FCEEEE;
+    --warn: #8F5000;
+    --warn-bg: #FDF0E0;
 
+    --sb-w: 244px;
+    --sb-w-collapsed: 72px;
+    --topbar-h: 60px;
     --r-card: 16px;
     --r-pill: 999px;
-    --sans: "Google Sans", "Product Sans", -apple-system, BlinkMacSystemFont,
-            "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --sans: "Google Sans Text", "Google Sans", "Product Sans", -apple-system,
+            BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+            "Microsoft YaHei", sans-serif;
     --mono: "Roboto Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+    --shadow: 0 1px 2px rgba(60,64,67,.06), 0 1px 3px 1px rgba(60,64,67,.05);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: var(--sans);
-    background: var(--bg); color: var(--text);
-    font-size: 14px; line-height: 1.55;
-    -webkit-font-smoothing: antialiased;
+    font-family: var(--sans); background: var(--bg); color: var(--text);
+    font-size: 14px; line-height: 1.55; -webkit-font-smoothing: antialiased;
   }
   #app { display: flex; min-height: 100vh; }
+  ::selection { background: var(--nav-on); }
 
-  /* ── 侧边栏 ─────────────────────────────────────────────────────────── */
+  /* ── 侧栏 ───────────────────────────────────────────────────────────── */
   .sidebar {
-    width: 256px; flex: 0 0 256px; padding: 18px 12px;
-    border-right: 1px solid var(--outline-soft);
-    display: flex; flex-direction: column; gap: 4px;
+    width: var(--sb-w); flex: 0 0 var(--sb-w); padding: 10px 12px 14px;
+    display: flex; flex-direction: column;
     position: sticky; top: 0; height: 100vh;
+    transition: width .2s cubic-bezier(.2,0,0,1), flex-basis .2s cubic-bezier(.2,0,0,1);
   }
-  .brand {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 12px 18px; font-size: 17px; letter-spacing: -.01em;
+  .sidebar.collapsed { width: var(--sb-w-collapsed); flex-basis: var(--sb-w-collapsed); }
+  .side-top { display: flex; align-items: center; gap: 6px; height: var(--topbar-h); }
+  .icon-btn {
+    all: unset; cursor: pointer; width: 40px; height: 40px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--r-pill); color: var(--text-2); transition: background .15s;
   }
-  .brand .spark {
-    width: 22px; height: 22px; flex: none;
-    background: var(--g-sweep); border-radius: 4px;
+  .icon-btn:hover { background: var(--surface-press); }
+  .icon-btn:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
+  .brand-text {
+    display: flex; align-items: center; gap: 9px; font-size: 15px;
+    color: var(--text-2); white-space: nowrap; overflow: hidden;
+  }
+  .spark {
+    width: 20px; height: 20px; flex: none; background: var(--g-sweep);
     clip-path: polygon(50% 0,61% 39%,100% 50%,61% 61%,50% 100%,39% 61%,0 50%,39% 39%);
   }
-  .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+  .sidebar.collapsed .brand-text { display: none; }
+
+  .sidebar nav { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
   .sidebar nav button {
-    all: unset; cursor: pointer; display: flex; align-items: center; gap: 12px;
-    padding: 10px 16px; border-radius: var(--r-pill);
-    color: var(--muted); font-size: 14px; font-family: var(--sans);
-    transition: background .15s, color .15s;
+    all: unset; cursor: pointer; display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px; border-radius: var(--r-pill); color: var(--text-2);
+    font-size: 14px; font-family: var(--sans); white-space: nowrap;
+    transition: background .15s;
   }
-  .sidebar nav button:hover { background: var(--surface-hi); color: var(--text); }
+  .sidebar nav button svg { width: 20px; height: 20px; flex: none; fill: currentColor; opacity: .75; }
+  .sidebar nav button:hover { background: var(--surface-press); }
   .sidebar nav button.active { background: var(--nav-on); color: var(--nav-on-fg); font-weight: 500; }
+  .sidebar nav button.active svg { opacity: 1; }
   .sidebar nav button:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
-  .side-foot { margin-top: auto; padding: 12px 16px; color: var(--muted); font-size: 12px; }
+  .sidebar.collapsed nav button { justify-content: center; padding: 10px 0; }
+  .sidebar.collapsed .nav-label { display: none; }
 
-  main { flex: 1; padding: 28px 32px 64px; max-width: 1320px; min-width: 0; }
+  .side-foot { margin-top: auto; padding: 12px 16px 2px; font-size: 12px; color: var(--muted); }
+  .side-foot .sf-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+  .side-foot .sf-row b { color: var(--text-2); font-weight: 500; }
+  .side-foot a { color: var(--muted); text-decoration: none; }
+  .side-foot a:hover { color: var(--nav-on-fg); }
+  .sf-sep { height: 1px; background: var(--outline-soft); margin: 9px 0; }
+  .sidebar.collapsed .side-foot { display: none; }
+
+  /* ── 内容区 ─────────────────────────────────────────────────────────── */
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    height: var(--topbar-h); flex: none; display: flex; align-items: center;
+    justify-content: space-between; gap: 16px; padding: 0 24px;
+    position: sticky; top: 0; z-index: 10; background: var(--bg);
+  }
+  .page-title { font-size: 20px; font-weight: 400; letter-spacing: -.01em; color: var(--text); }
+  .topbar-right { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+         box-shadow: 0 0 0 3px rgba(20,108,46,.14); }
+  .dot.bad { background: var(--fail); box-shadow: 0 0 0 3px rgba(179,38,30,.14); }
+
+  main { flex: 1; padding: 4px 24px 36px; min-width: 0; }
   h2 {
-    font-size: 15px; font-weight: 500; letter-spacing: .01em;
-    margin-bottom: 14px; display: flex; align-items: center;
-    justify-content: space-between; gap: 12px;
+    font-size: 15px; font-weight: 500; color: var(--text); margin-bottom: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; min-height: 32px;
   }
 
-  /* ── 定高列表 ────────────────────────────────────────────────────────
-     列表页撑满视口而不是被数据撑开：表头固定、中间滚动、分页钉在底部。
-     这样翻页、筛选、数据多少都不会让页面高度跳动。
-     min-height:0 是必须的——flex 子项默认 min-height:auto，会被内容撑破
-     而不是产生滚动。 */
-  .page-fill { display: flex; flex-direction: column;
-               height: calc(100vh - 56px); margin-bottom: 0; }
-  .table-scroll { flex: 1; min-height: 0; overflow: auto;
-                  border: 1px solid var(--outline-soft); border-radius: 12px; }
-  .table-scroll table { font-size: 13px; }
-  .table-scroll thead th { position: sticky; top: 0; z-index: 1;
-    background: var(--surface); border-bottom: 1px solid var(--outline); }
-  .pager { display: flex; align-items: center; justify-content: space-between;
-           gap: 12px; padding-top: 14px; flex-wrap: wrap; font-size: 13px; }
-  .pager-btns { display: flex; align-items: center; gap: 6px; }
-  .pager .btn[disabled] { opacity: .4; cursor: default; }
-
-  /* 图表容器必须有确定高度：Chart.js 配了 maintainAspectRatio:false 时会去
-     填满父元素，父元素若又由 canvas 撑开就会形成反馈循环、每次重绘都变高。
-     用绝对定位把 canvas 从文档流里摘出来，循环就断了。 */
-  .chart-wrap { position: relative; height: 300px; width: 100%; }
-  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important;
-                       height: 100% !important; }
-  @media (max-width: 900px) { .chart-wrap { height: 220px; } }
-
-  /* ── 卡片 ───────────────────────────────────────────────────────────── */
+  /* ── 卡片：纯白无描边 ───────────────────────────────────────────────── */
   .panel, .card {
-    background: var(--bg); border: 1px solid var(--outline-soft);
-    border-radius: var(--r-card); padding: 20px 22px; margin-bottom: 16px;
+    background: var(--card); border-radius: var(--r-card);
+    padding: 20px 22px; margin-bottom: 14px; box-shadow: var(--shadow);
   }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .grid-2 > .panel, .grid-2 > .card { margin-bottom: 0; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .grid-main { display: grid; grid-template-columns: minmax(0,2fr) minmax(310px,1fr);
+               gap: 14px; margin-bottom: 14px; align-items: start; }
+  .grid-2 > *, .grid-main > * { margin-bottom: 0; }
+  .stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .stack > * { margin-bottom: 0; }
 
   /* ── KPI ────────────────────────────────────────────────────────────── */
-  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-  .kpi { background: var(--surface); border: 1px solid var(--outline-soft);
-         border-radius: var(--r-card); padding: 16px 18px; }
-  .kpi .value { color: var(--text); }
-  .kpi .label { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-  .kpi .value { font-size: 26px; font-weight: 400; letter-spacing: -.02em; }
-  .kpi .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr));
+             gap: 14px; margin-bottom: 14px; }
+  .kpi { background: var(--card); border-radius: var(--r-card); padding: 15px 18px;
+         box-shadow: var(--shadow); }
+  .kpi .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .kpi .value { font-size: 27px; font-weight: 400; letter-spacing: -.02em;
+                line-height: 1.2; color: var(--text); font-variant-numeric: tabular-nums; }
+  .kpi .sub { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
 
   /* ── 表格 ───────────────────────────────────────────────────────────── */
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
   th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
-       padding: 8px 10px; border-bottom: 1px solid var(--outline-soft); }
-  td { padding: 10px; border-bottom: 1px solid var(--outline-soft); vertical-align: top; }
+       padding: 9px 10px; border-bottom: 1px solid var(--outline-soft); white-space: nowrap; }
+  td { padding: 11px 10px; border-bottom: 1px solid var(--outline-soft);
+       vertical-align: top; overflow-wrap: anywhere; }
   tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover { background: rgba(11,87,208,.04); }
-  .empty { text-align: center; color: var(--muted); padding: 28px 0; }
+  tbody tr:hover { background: #F6F9FE; }
+  td.nw, th.nw { white-space: nowrap; overflow-wrap: normal; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .empty { text-align: center; color: var(--muted); padding: 36px 0; }
 
   /* ── 按钮 ───────────────────────────────────────────────────────────── */
   .btn, .controls button, button.btn {
     all: unset; cursor: pointer; font-family: var(--sans); font-size: 13px;
-    padding: 8px 18px; border-radius: var(--r-pill);
-    background: #0B57D0; color: #fff; transition: filter .15s, background .15s;
+    padding: 8px 18px; border-radius: var(--r-pill); white-space: nowrap;
+    background: var(--nav-on); color: var(--nav-on-fg); font-weight: 500;
+    transition: background .15s;
   }
-  .btn:hover { filter: brightness(1.12); }
+  .btn:hover { background: #C2D8FA; }
   .btn:focus-visible { outline: 2px solid var(--g-blue); outline-offset: 2px; }
-  .btn.muted { background: var(--surface-hi); color: var(--text); }
+  .btn.muted { background: var(--surface-hi); color: var(--text-2); font-weight: 400; }
   .btn.muted:hover { background: var(--surface-press); }
   .btn.danger { background: transparent; color: var(--fail); box-shadow: inset 0 0 0 1px var(--outline); }
-  .btn.danger:hover { background: #FCE8E6; }
-  .controls { display: flex; gap: 8px; align-items: center; }
-  .controls button { background: var(--surface-hi); color: var(--text); padding: 6px 14px; }
+  .btn.danger:hover { background: var(--fail-bg); }
+  .btn[disabled] { opacity: .38; cursor: default; pointer-events: none; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls button { background: var(--surface-hi); color: var(--text-2);
+                     font-weight: 400; padding: 7px 15px; }
   .controls button:hover { background: var(--surface-press); }
   .actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
   select, input[type=text], input[type=password], input[type=number], textarea {
     font-family: var(--sans); font-size: 13px; color: var(--text);
-    background: var(--surface-hi); border: 1px solid var(--outline);
-    border-radius: 10px; padding: 8px 12px; outline: none;
+    background: var(--surface-hi); border: 1px solid transparent;
+    border-radius: 10px; padding: 8px 12px; outline: none; transition: border-color .15s;
   }
-  select:focus, input:focus, textarea:focus { border-color: var(--g-blue); }
+  select { cursor: pointer; }
+  select:focus, input:focus, textarea:focus { border-color: var(--g-blue); background: var(--card); }
 
   /* ── 徽标 ───────────────────────────────────────────────────────────── */
-  .badge { display: inline-block; padding: 2px 10px; border-radius: var(--r-pill);
-           font-size: 11.5px; background: var(--surface-hi); color: var(--muted); }
-  .badge.ok { background: #E6F4EA; color: var(--ok); }
-  .badge.fail { background: #FCE8E6; color: var(--fail); }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: var(--r-pill);
+           font-size: 11.5px; line-height: 1.4; white-space: nowrap;
+           background: var(--surface-hi); color: var(--muted); }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); }
+  .badge.fail { background: var(--fail-bg); color: var(--fail); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); }
   .badge.muted { background: var(--surface-hi); color: var(--muted); }
 
-  .pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
-         word-break: break-all; }
+  .pre { font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; word-break: break-all; }
+  .clamp2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+            overflow: hidden; }
   code { font-family: var(--mono); font-size: 12px; background: var(--surface-hi);
          padding: 1px 6px; border-radius: 5px; }
   .muted { color: var(--muted); }
-  .truncate { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hint, .desc { color: var(--muted); font-size: 12.5px; }
+  .truncate { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hint, .desc { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
   .err { color: var(--fail); font-size: 13px; margin-top: 10px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .field { margin-bottom: 14px; }
   .field .label { display: block; margin-bottom: 6px; font-size: 13px; }
+  /* 折叠说明：Gemini 的界面不堆长段落，细节收进来 */
+  details.note { margin-bottom: 12px; }
+  details.note > summary { cursor: pointer; color: var(--nav-on-fg); font-size: 12.5px;
+                           list-style: none; display: inline-flex; align-items: center; gap: 4px; }
+  details.note > summary::-webkit-details-marker { display: none; }
+  details.note > summary::after { content: "▾"; font-size: 10px; }
+  details.note[open] > summary::after { content: "▴"; }
+  details.note .body { color: var(--muted); font-size: 12.5px; line-height: 1.65;
+                       margin-top: 8px; padding: 12px 14px; background: var(--bg);
+                       border-radius: 12px; }
 
   /* ── 运行时配置表单 ─────────────────────────────────────────────────── */
-  .rtrow { display: grid; grid-template-columns: 160px 210px 1fr; gap: 12px;
+  .rtrow { display: grid; grid-template-columns: 150px 190px 1fr; gap: 14px;
            align-items: center; padding: 9px 0; border-bottom: 1px solid var(--outline-soft); }
   .rtrow:last-child { border-bottom: none; }
   .rtrow label { font-size: 13px; }
   .rtrow input[type=text], .rtrow input[type=number], .rtrow select { width: 100%; }
-  .rtrow input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--g-blue); }
+  .rtrow input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--nav-on-fg); }
   .rthint { color: var(--muted); font-size: 12px; }
 
-  /* ── signature：IP slot 距离封禁红线还有多远 ────────────────────────────
-     实测单 IP 约 85 次请求后被 Google 重定向到 sorry 页（干净连接 82-88）。
-     这个数字是本项目独有的知识，也是部署时唯一真正要盯的东西——比请求量和
-     延迟重要得多。所以把它做成面板的主角：一条按 Gemini 三色渐变推进的轨道，
-     越接近红线颜色越往粉红走。 */
-  .slot { padding: 14px 0; border-bottom: 1px solid var(--outline-soft); }
-  .slot:last-child { border-bottom: none; }
-  .slot-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .slot-name { font-size: 13.5px; }
-  .slot-count { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  /* ── signature：距离封禁红线 ─────────────────────────────────────────
+     实测单出口约 85 次请求后被 Google 重定向到 sorry 页。这个数字是本项目
+     独有的知识，也是部署时唯一真正要盯的东西——所以它是面板主角，放首屏
+     右栏与趋势图齐平。三色渐变全站只用在这一条轨道上。 */
+  .slot { padding: 13px 0; border-bottom: 1px solid var(--outline-soft); }
+  .slot:first-of-type { padding-top: 2px; }
+  .slot:last-child { border-bottom: none; padding-bottom: 2px; }
+  .slot-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .slot-name { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot-count { font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+                white-space: nowrap; font-variant-numeric: tabular-nums; }
   .slot-count b { color: var(--text); font-size: 15px; font-weight: 500; }
   .track { position: relative; height: 6px; border-radius: var(--r-pill);
-           background: var(--surface-hi); margin-top: 10px; overflow: hidden; }
+           background: var(--surface-press); margin-top: 9px; overflow: hidden; }
   .track .fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--r-pill);
-                 background: var(--g-sweep); background-size: 340px 100%;
+                 background: var(--g-sweep); background-size: 300px 100%;
                  transition: width .45s cubic-bezier(.2,0,0,1); }
   .redline { position: absolute; top: -3px; bottom: -3px; width: 2px;
-             background: var(--fail); opacity: .85; }
-  .slot-note { margin-top: 7px; font-size: 12px; color: var(--muted); }
+             background: var(--fail); opacity: .9; }
+  .slot-note { margin-top: 7px; font-size: 11.5px; color: var(--muted); }
   .slot-note.warn { color: var(--warn); }
-  .slot-note.danger { color: var(--fail); }
+  .slot-note.danger { color: var(--fail); font-weight: 500; }
+  .slot-scroll { max-height: 262px; overflow-y: auto; }
+
+  /* ── 图表 ───────────────────────────────────────────────────────────── */
+  .chart-wrap { position: relative; height: 262px; width: 100%; }
+  .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+
+  /* ── 定高列表：撑满视口，不被数据撑开 ───────────────────────────────── */
+  .page-fill { display: flex; flex-direction: column;
+               height: calc(100vh - var(--topbar-h) - 44px); margin-bottom: 0; }
+  .table-scroll { flex: 1; min-height: 0; overflow: auto; }
+  .table-scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
+  .pager { display: flex; align-items: center; justify-content: space-between;
+           gap: 12px; padding-top: 14px; margin-top: 4px; flex-wrap: wrap;
+           font-size: 13px; border-top: 1px solid var(--outline-soft); }
+  .pager-btns { display: flex; align-items: center; gap: 6px; }
 
   /* ── 登录 ───────────────────────────────────────────────────────────── */
-  .login-box { max-width: 380px; margin: 18vh auto; background: var(--bg);
-               box-shadow: 0 1px 3px rgba(60,64,67,.16), 0 4px 16px rgba(60,64,67,.1);
-               border: 1px solid var(--outline-soft); border-radius: 24px; padding: 32px; }
-  .login-box h1 { font-size: 19px; font-weight: 400; margin-bottom: 20px;
+  .login-box { max-width: 372px; margin: 16vh auto; background: var(--card);
+               border-radius: 28px; padding: 34px 32px;
+               box-shadow: 0 1px 3px rgba(60,64,67,.16), 0 8px 28px rgba(60,64,67,.1); }
+  .login-box h1 { font-size: 19px; font-weight: 400; margin-bottom: 22px;
                   display: flex; align-items: center; gap: 10px; }
-  .login-box input { width: 100%; margin-bottom: 14px; padding: 11px 14px; }
-  .login-box .btn { width: 100%; text-align: center; }
+  .login-box input { width: 100%; margin-bottom: 14px; padding: 12px 15px; }
+  .login-box .btn { width: 100%; text-align: center; background: var(--nav-on-fg); color: #fff; }
+  .login-box .btn:hover { background: #0A4FBC; }
 
   /* ── 弹窗 ───────────────────────────────────────────────────────────── */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(32,33,36,.5);
+  .modal-overlay { position: fixed; inset: 0; background: rgba(32,33,36,.45);
                    display: flex; align-items: center; justify-content: center; z-index: 50; }
-  .modal { background: var(--bg); box-shadow: 0 8px 32px rgba(60,64,67,.24);
-           border: 1px solid var(--outline-soft);
-           border-radius: 24px; padding: 26px; width: min(460px, 92vw); }
+  .modal { background: var(--card); border-radius: 28px; padding: 26px 28px;
+           width: min(460px,92vw); box-shadow: 0 8px 32px rgba(60,64,67,.24); }
   .modal h3 { font-size: 17px; font-weight: 400; margin-bottom: 8px; }
+  .modal-body { margin: 14px 0 18px; }
+  .modal-err { color: var(--fail); font-size: 12.5px; margin-bottom: 10px; }
 
+  @media (max-width: 1100px) { .grid-main { grid-template-columns: 1fr; } }
   @media (max-width: 900px) {
     #app { flex-direction: column; }
-    .sidebar { width: 100%; flex: none; height: auto; position: static;
-               border-right: none; border-bottom: 1px solid var(--outline-soft); }
-    .sidebar nav { flex-direction: row; overflow-x: auto; }
+    .sidebar, .sidebar.collapsed { width: 100%; flex-basis: auto; height: auto;
+                                   position: static; padding: 8px 12px; }
+    .side-top { height: 48px; }
+    .sidebar nav { flex-direction: row; overflow-x: auto; margin-top: 2px; }
+    .sidebar.collapsed nav button { padding: 10px 16px; }
+    .sidebar.collapsed .nav-label { display: inline; }
     .side-foot { display: none; }
-    main { padding: 20px 16px 48px; }
+    .topbar { padding: 0 14px; }
+    main { padding: 4px 14px 28px; }
     .grid-2 { grid-template-columns: 1fr; }
     .rtrow { grid-template-columns: 1fr; gap: 5px; }
+    .chart-wrap { height: 210px; }
   }
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
@@ -272,115 +338,133 @@ const pages = {
     const usage = await api('/admin/api/usage');
     return `
       <div class="kpi-row">
-        <div class="kpi"><div class="label">24 小时请求数</div><div class="value">${fmt.num(stats.total_requests)}</div></div>
+        <div class="kpi"><div class="label">24 小时请求</div><div class="value">${fmt.num(stats.total_requests)}</div></div>
         <div class="kpi"><div class="label">成功率</div><div class="value">${fmt.pct(stats.success_rate)}</div>
-          <div class="sub">${fmt.num(stats.success)} 成功 / ${fmt.num(stats.failures)} 失败</div></div>
+          <div class="sub">${fmt.num(stats.success)} 成功 · ${fmt.num(stats.failures)} 失败</div></div>
         <div class="kpi"><div class="label">平均延迟</div><div class="value">${fmt.ms(stats.avg_ms)}</div></div>
         <div class="kpi"><div class="label">输入 Token</div><div class="value">${fmt.num(stats.prompt_tokens)}</div></div>
         <div class="kpi"><div class="label">输出 Token</div><div class="value">${fmt.num(stats.output_tokens)}</div></div>
       </div>
-      <div class="panel">
-        <h2>请求量与延迟趋势
-          <span class="controls">
-            <select id="rangeSel">
-              <option value="24h">最近 24 小时</option>
-              <option value="7d">最近 7 天</option>
-              <option value="30d">最近 30 天</option>
-            </select>
-          </span>
-        </h2>
-        <div class="chart-wrap"><canvas id="chartReq"></canvas></div>
-      </div>
-      <div class="panel">
-        <h2>连通性诊断
-          <span class="controls">
-            <select id="testProxy"><option value="">自动选择（按调度规则）</option><option value="0">直连主机 IP</option></select>
-            <button class="btn" onclick="runTest()">测试一次</button>
-          </span>
-        </h2>
-        <p style="color: var(--muted); font-size: 12.5px; margin-bottom: 10px; line-height: 1.6;">
-          打一次真实 Gemini 请求看是否通。<b>不消耗限流配额、不写入请求记录</b>，
-          专门用来排查 IP 是不是被 Google 风控了。返回 302/429 都是 IP 黑名单
-          信号 → 该换 IP 或加代理。
-        </p>
-        <div id="testResult" style="display:none;"></div>
-      </div>
-      <div class="panel">
-        <h2>距离封禁红线
-          <span class="controls"><button onclick="switchPage('dashboard')">刷新</button></span>
-        </h2>
-        <p class="hint" style="margin-bottom:16px">
-          实测单个出口 IP 约 <b style="color:var(--text)">85 次请求</b>后会被 Google 重定向到
-          <code>sorry/index</code>（干净连接下 82-88，n=8）。下面按每个 slot 的 1 小时用量对这条线画进度，
-          红竖线是本地 RPH 限额的位置——它挡在红线前面，超了直接返回 429 而不去消耗 Google 配额。
-        </p>
-        ${(usage.items || []).map(u => {
-          const rph = u.rph || 0;
-          const limit = u.limit_rph || 0;
-          const pct = Math.min(rph / BAN_LINE * 100, 100);
-          const limitPct = limit ? Math.min(limit / BAN_LINE * 100, 100) : null;
-          const left = Math.max(BAN_LINE - rph, 0);
-          let noteCls = '', note = `按当前用量还能再打约 ${left} 次`;
-          if (rph >= BAN_LINE) { noteCls = 'danger'; note = '已越过实测红线，该出口随时可能被拦'; }
-          else if (rph >= BAN_LINE * 0.75) { noteCls = 'warn'; note = `接近红线，只剩约 ${left} 次`; }
-          else if (rph === 0) { note = '本小时还没有请求'; }
-          return `<div class="slot">
-            <div class="slot-head">
-              <span class="slot-name">${escapeHtml(u.name)}</span>
-              <span class="slot-count"><b>${rph}</b> / ${BAN_LINE} 次·小时</span>
+
+      <div class="grid-main">
+        <div class="panel">
+          <h2>请求量与延迟
+            <span class="controls">
+              <select id="rangeSel">
+                <option value="24h">最近 24 小时</option>
+                <option value="7d">最近 7 天</option>
+                <option value="30d">最近 30 天</option>
+              </select>
+            </span>
+          </h2>
+          <div class="chart-wrap"><canvas id="chartReq"></canvas></div>
+        </div>
+
+        <div class="stack">
+        <div class="panel">
+          <h2>距离封禁红线
+            <span class="controls"><button onclick="switchPage('dashboard')">刷新</button></span>
+          </h2>
+          <div class="slot-scroll">
+            ${(usage.items || []).map(u => {
+              const rph = u.rph || 0;
+              const limit = u.limit_rph || 0;
+              const pct = Math.min(rph / BAN_LINE * 100, 100);
+              const limitPct = limit ? Math.min(limit / BAN_LINE * 100, 100) : null;
+              const left = Math.max(BAN_LINE - rph, 0);
+              let noteCls = '', note = `还能再打约 ${left} 次`;
+              if (rph >= BAN_LINE) { noteCls = 'danger'; note = '已越过红线，随时可能被拦'; }
+              else if (rph >= BAN_LINE * 0.75) { noteCls = 'warn'; note = `接近红线，只剩约 ${left} 次`; }
+              else if (rph === 0) { note = '本小时还没有请求'; }
+              return `<div class="slot">
+                <div class="slot-head">
+                  <span class="slot-name">${escapeHtml(u.name)}</span>
+                  <span class="slot-count"><b>${rph}</b> / ${BAN_LINE}</span>
+                </div>
+                <div class="track">
+                  <div class="fill" style="width:${pct}%"></div>
+                  ${limitPct !== null ? `<div class="redline" style="left:${limitPct}%"
+                    title="本地 RPH 限额 ${limit}"></div>` : ''}
+                </div>
+                <div class="slot-note ${noteCls}">${note} · 并发 ${u.inflight}/${u.limit_concurrent || '∞'}
+                  · RPM ${u.rpm}/${u.limit_rpm || '∞'}</div>
+              </div>`;
+            }).join('') || '<div class="empty">还没有任何请求经过</div>'}
+          </div>
+          <details class="note" style="margin:12px 0 0">
+            <summary>这条线是怎么来的</summary>
+            <div class="body">
+              实测单个出口 IP 约 <b>85 次请求</b>后会被 Google 重定向到 <code>sorry/index</code>
+              （干净连接下 82-88，n=8）。轨道按每个 slot 的 1 小时用量对这条线画进度；
+              红竖线是本地 RPH 限额的位置——它挡在红线前面，超了直接返回 429 而不去消耗
+              Google 配额。要放大产能就在「代理池」加代理，每个代理是独立 slot。
             </div>
-            <div class="track">
-              <div class="fill" style="width:${pct}%"></div>
-              ${limitPct !== null ? `<div class="redline" style="left:${limitPct}%"
-                title="本地 RPH 限额 ${limit}"></div>` : ''}
-            </div>
-            <div class="slot-note ${noteCls}">${note}
-              · 并发 ${u.inflight}/${u.limit_concurrent || '∞'}
-              · RPM ${u.rpm}/${u.limit_rpm || '∞'}</div>
-          </div>`;
-        }).join('') || '<div class="empty">还没有任何请求经过</div>'}
+          </details>
+        </div>
+
+        <div class="panel">
+          <h2>连通性诊断
+            <span class="controls"><button class="btn" onclick="runTest()">测试一次</button></span>
+          </h2>
+          <select id="testProxy" style="width:100%">
+            <option value="">自动选择（按调度规则）</option>
+            <option value="0">直连主机 IP</option>
+          </select>
+          <p class="hint" style="margin-top:10px">
+            打一次真实请求看是否通。不消耗限流配额、不写入请求记录。
+            返回 302/429 就是出口进了黑名单，该换 IP。
+          </p>
+          <div id="testResult" style="display:none; margin-top:12px;"></div>
+        </div>
+        </div>
       </div>
 
       <div class="grid-2">
         <div class="panel">
           <h2>按模型分组</h2>
           <table>
-            <thead><tr><th>模型</th><th>请求</th><th>成功</th><th>平均</th><th>Token 合计</th></tr></thead>
+            <colgroup><col style="width:38%"><col style="width:14%"><col style="width:14%"><col style="width:16%"><col style="width:18%"></colgroup>
+            <thead><tr><th>模型</th><th class="nw">请求</th><th class="nw">成功</th><th class="nw">平均</th><th class="nw">Token</th></tr></thead>
             <tbody>${(stats.by_model || []).map(m => `
-              <tr><td>${m.model}</td><td>${fmt.num(m.requests)}</td>
-                  <td>${fmt.num(m.success)}</td><td>${fmt.ms(m.avg_ms)}</td>
-                  <td>${fmt.num(m.prompt_tokens + m.output_tokens)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">暂无数据</td></tr>'}
+              <tr><td class="truncate" title="${escapeHtml(m.model)}">${m.model}</td>
+                  <td class="num nw">${fmt.num(m.requests)}</td>
+                  <td class="num nw">${fmt.num(m.success)}</td>
+                  <td class="num nw">${fmt.ms(m.avg_ms)}</td>
+                  <td class="num nw">${fmt.num(m.prompt_tokens + m.output_tokens)}</td></tr>`).join('')
+              || '<tr><td colspan="5" class="empty">暂无数据</td></tr>'}
             </tbody>
           </table>
         </div>
         <div class="panel">
-          <h2>按代理分组</h2>
+          <h2>按出口分组</h2>
           <table>
-            <thead><tr><th>代理</th><th>请求</th><th>成功</th><th>平均</th></tr></thead>
+            <colgroup><col style="width:46%"><col style="width:18%"><col style="width:18%"><col style="width:18%"></colgroup>
+            <thead><tr><th>出口</th><th class="nw">请求</th><th class="nw">成功</th><th class="nw">平均</th></tr></thead>
             <tbody>${(stats.by_proxy || []).map(p => `
-              <tr><td>${p.proxy === '(direct)' ? '直连' : p.proxy}</td><td>${fmt.num(p.requests)}</td>
-                  <td>${fmt.num(p.success)}</td><td>${fmt.ms(p.avg_ms)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">暂无数据</td></tr>'}
+              <tr><td class="truncate">${!p.proxy || p.proxy === '(direct)' ? '直连' : escapeHtml(p.proxy)}</td>
+                  <td class="num nw">${fmt.num(p.requests)}</td>
+                  <td class="num nw">${fmt.num(p.success)}</td>
+                  <td class="num nw">${fmt.ms(p.avg_ms)}</td></tr>`).join('')
+              || '<tr><td colspan="4" class="empty">暂无数据</td></tr>'}
             </tbody>
           </table>
         </div>
       </div>
 
-      <div class="card">
-        <h2>错误分类（近 ${stats.window_hours || 24}h）</h2>
-        <p style="color: var(--muted); margin-bottom: 10px; font-size: 12.5px;">
-          按"看到之后该做什么"归类，而不是堆一列原始错误串。
-        </p>
-        <table>
-          <thead><tr><th>类型</th><th>次数</th><th>含义 / 该怎么办</th></tr></thead>
-          <tbody>
-            ${(stats.error_breakdown || []).map(e => `<tr>
-              <td><span class="badge ${ERR_BADGE[e.kind] || 'muted'}">${escapeHtml(e.kind)}</span></td>
-              <td>${e.count}</td>
-              <td style="font-size:12.5px">${ERR_DESC[e.kind] || ''}
-                <div class="pre" style="margin-top:4px;color:var(--muted);font-size:11.5px">${escapeHtml(e.sample || '')}</div></td>
-            </tr>`).join('') || '<tr><td colspan="3" class="empty">窗口内没有失败</td></tr>'}
-          </tbody>
-        </table>
+      <div class="panel">
+          <h2>错误分类（近 ${stats.window_hours || 24}h）</h2>
+          <table>
+            <colgroup><col style="width:22%"><col style="width:10%"><col style="width:68%"></colgroup>
+            <thead><tr><th>类型</th><th class="nw">次数</th><th>含义 / 该怎么办</th></tr></thead>
+            <tbody>
+              ${(stats.error_breakdown || []).map(e => `<tr>
+                <td class="nw"><span class="badge ${ERR_BADGE[e.kind] || 'muted'}">${escapeHtml(e.kind)}</span></td>
+                <td class="num nw">${e.count}</td>
+                <td style="font-size:12.5px">${ERR_DESC[e.kind] || ''}
+                  <div class="pre" style="margin-top:5px;color:var(--muted)">${escapeHtml(e.sample || '')}</div></td>
+              </tr>`).join('') || '<tr><td colspan="3" class="empty">窗口内没有失败</td></tr>'}
+            </tbody>
+          </table>
       </div>
     `;
   },
@@ -407,9 +491,16 @@ const pages = {
         </h2>
         <div class="table-scroll">
           <table id="reqTable">
+            <colgroup>
+              <col style="width:140px"><col style="width:150px"><col style="width:130px">
+              <col style="width:96px"><col style="width:70px"><col style="width:84px">
+              <col style="width:84px"><col style="width:64px"><col style="width:64px"><col>
+            </colgroup>
             <thead><tr>
-              <th>时间</th><th>模型</th><th>实际模型</th><th>代理</th><th>状态</th>
-              <th>首字延迟</th><th>总用时</th><th>输入 Token</th><th>输出 Token</th><th>接口</th>
+              <th class="nw">时间</th><th class="nw">模型</th><th class="nw">实际模型</th>
+              <th class="nw">出口</th><th class="nw">状态</th>
+              <th class="nw">首字</th><th class="nw">总用时</th>
+              <th class="nw">输入</th><th class="nw">输出</th><th>接口</th>
             </tr></thead>
             <tbody><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
           </table>
@@ -422,38 +513,50 @@ const pages = {
   proxies: async () => {
     const data = await api('/admin/api/proxies');
     return `
-      <div class="panel">
+      <div class="panel page-fill">
         <h2>代理池
           <span class="controls"><button class="btn" onclick="addProxy()">+ 添加代理</button></span>
         </h2>
-        <p style="color: var(--muted); font-size: 12.5px; margin-bottom: 14px; line-height: 1.6;">
-          每个代理是一个独立的 IP slot，享有独立的并发/RPM/RPH 配额。
-          <b>配越多代理 → 总容量线性放大</b>。请求会自动找有空位的代理；都满 → 返回 HTTP 429。
-          失败 5 次自动熔断（"重置"按钮可手动恢复）。<br>
-          <span style="color: var(--yellow);">注意：</span>
-          配了至少一个代理后，<b>不会再退回直连</b>（避免代理满了把主机 IP 也打爆）。
-        </p>
-        <table>
-          <thead><tr>
-            <th>ID</th><th>名称</th><th>代理 URL</th><th>状态</th>
-            <th>失败次数</th><th>最近错误</th><th>操作</th>
-          </tr></thead>
-          <tbody>${(data.items || []).map(p => `
-            <tr>
-              <td>${p.id}</td>
-              <td>${p.name}</td>
-              <td class="pre truncate">${p.url}</td>
-              <td>${p.enabled ? '<span class="badge ok">已启用</span>' : '<span class="badge muted">已禁用</span>'}</td>
-              <td>${p.fail_count > 0 ? '<span class="badge fail">' + p.fail_count + '</span>' : p.fail_count}</td>
-              <td class="pre truncate">${p.last_error || '-'}</td>
-              <td>
-                <button class="btn muted" onclick="toggleProxy(${p.id})">${p.enabled ? '禁用' : '启用'}</button>
-                <button class="btn muted" onclick="resetProxy(${p.id})">重置</button>
-                <button class="btn danger" onclick="delProxy(${p.id})">删除</button>
-              </td>
-            </tr>`).join('') || '<tr><td colspan="7" class="empty">还没有代理。点击"+ 添加代理"添加。</td></tr>'}
-        </tbody>
-      </table>
+        <details class="note">
+          <summary>每个代理是一个独立 IP slot</summary>
+          <div class="body">
+            每个代理享有独立的并发 / RPM / RPH 配额，<b>配越多代理，总容量线性放大</b>。
+            请求会自动找有空位的代理，都满则返回 HTTP 429。失败 5 次自动熔断，
+            「重置」可手动恢复。<br><br>
+            注意：配了至少一个代理后<b>不会再退回直连</b>，避免代理满了把主机 IP 也打爆。
+            实测单个出口约 85 次请求就会被 Google 拦，所以扩容只能靠加出口。
+          </div>
+        </details>
+        <div class="table-scroll">
+          <table>
+            <colgroup>
+              <col style="width:56px"><col style="width:150px"><col>
+              <col style="width:88px"><col style="width:80px"><col style="width:200px">
+              <col style="width:186px">
+            </colgroup>
+            <thead><tr>
+              <th class="nw">ID</th><th class="nw">名称</th><th>代理 URL</th><th class="nw">状态</th>
+              <th class="nw">失败</th><th class="nw">最近错误</th><th class="nw">操作</th>
+            </tr></thead>
+            <tbody>${(data.items || []).map(p => `
+              <tr>
+                <td class="num nw">${p.id}</td>
+                <td class="truncate" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
+                <td class="pre truncate" title="${escapeHtml(p.url)}">${escapeHtml(p.url)}</td>
+                <td class="nw">${p.enabled ? '<span class="badge ok">已启用</span>' : '<span class="badge muted">已禁用</span>'}</td>
+                <td class="num nw">${p.fail_count > 0 ? '<span class="badge fail">' + p.fail_count + '</span>' : p.fail_count}</td>
+                <td class="pre truncate" title="${escapeHtml(p.last_error || '')}">${escapeHtml(p.last_error || '—')}</td>
+                <td class="nw">
+                  <span class="actions">
+                    <button class="btn muted" onclick="toggleProxy(${p.id})">${p.enabled ? '禁用' : '启用'}</button>
+                    <button class="btn muted" onclick="resetProxy(${p.id})">重置</button>
+                    <button class="btn danger" onclick="delProxy(${p.id})">删除</button>
+                  </span>
+                </td>
+              </tr>`).join('') || '<tr><td colspan="7" class="empty">还没有代理。点「+ 添加代理」加一个。</td></tr>'}
+            </tbody>
+          </table>
+        </div>
       </div>
     `;
   },
@@ -487,7 +590,7 @@ const pages = {
           <pre class="pre" style="margin: 0; font-size: 12px;">curl http://your-host/v1/chat/completions \\
   -H "Authorization: Bearer YOUR_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"gemini-3.5-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
+  -d '{"model":"gemini-3.6-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
         </div>
       </div>
       <div class="panel">
@@ -516,7 +619,7 @@ const pages = {
         <div id="cookieStatus" style="margin-bottom: 10px;"></div>
         <textarea id="cookieInput" rows="3" placeholder="从 gemini.google.com 复制的完整 cookie，形如：SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=..."
           style="width:100%; padding:8px; background:var(--bg2); color:var(--fg);
-                 border:1px solid var(--border); border-radius:6px; font-size:12px;
+                 border:1px solid var(--outline); border-radius:10px; font-size:12px;
                  font-family:ui-monospace,monospace; resize:vertical;"></textarea>
         <div style="margin-top: 10px; display:flex; gap:8px; align-items:center;">
           <button class="btn" onclick="saveCookie()">保存并生效</button>
@@ -563,26 +666,53 @@ async function loadChart(range = '24h') {
   const p50 = (data.series || []).map(s => s.p50_ms);
   const ctx = document.getElementById('chartReq');
   if (!ctx) return;
+  const g = ctx.getContext('2d');
+  const areaBlue = g.createLinearGradient(0, 0, 0, 260);
+  areaBlue.addColorStop(0, 'rgba(66,133,244,.22)');
+  areaBlue.addColorStop(1, 'rgba(66,133,244,0)');
   charts.req = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: '请求数', data: reqs, borderColor: '#4f9eff',
-          backgroundColor: 'rgba(79,158,255,0.1)', yAxisID: 'y', tension: 0.3 },
-        { label: 'P50 延迟 (ms)', data: p50, borderColor: '#fbbf24',
-          backgroundColor: 'rgba(251,191,36,0.1)', yAxisID: 'y1', tension: 0.3 },
+        { label: '请求数', data: reqs, yAxisID: 'y',
+          borderColor: '#0B57D0', backgroundColor: areaBlue, fill: true,
+          tension: .35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4,
+          pointBackgroundColor: '#0B57D0' },
+        { label: 'P50 延迟', data: p50, yAxisID: 'y1',
+          borderColor: '#9B72CB', backgroundColor: 'transparent',
+          tension: .35, borderWidth: 2, borderDash: [5, 4],
+          pointRadius: 0, pointHoverRadius: 4, pointBackgroundColor: '#9B72CB' },
       ],
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#d8dde6' } } },
+      interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: 4 } },
+      plugins: {
+        legend: {
+          align: 'end',
+          labels: { color: '#5F6368', usePointStyle: true, pointStyle: 'circle',
+                    boxWidth: 8, boxHeight: 8, padding: 16,
+                    font: { size: 12, family: 'inherit' } },
+        },
+        tooltip: {
+          backgroundColor: '#1F1F1F', padding: 10, cornerRadius: 8,
+          titleFont: { size: 12, weight: '500' }, bodyFont: { size: 12 },
+          displayColors: true, usePointStyle: true, boxPadding: 4,
+        },
+      },
       scales: {
-        x: { ticks: { color: '#8993a8' }, grid: { color: '#2a3140' } },
-        y: { type: 'linear', position: 'left', ticks: { color: '#8993a8' },
-             grid: { color: '#2a3140' }, title: { display: true, text: '请求数', color: '#8993a8' } },
-        y1: { type: 'linear', position: 'right', ticks: { color: '#8993a8' },
-              grid: { drawOnChartArea: false }, title: { display: true, text: 'P50 (ms)', color: '#8993a8' } },
+        x: { ticks: { color: '#5F6368', maxRotation: 0, autoSkipPadding: 24,
+                      font: { size: 11 } },
+             grid: { display: false }, border: { color: '#E8ECF1' } },
+        y: { type: 'linear', position: 'left', beginAtZero: true,
+             ticks: { color: '#5F6368', font: { size: 11 }, precision: 0, maxTicksLimit: 6 },
+             grid: { color: '#EDF1F7' }, border: { display: false } },
+        y1: { type: 'linear', position: 'right', beginAtZero: true,
+              ticks: { color: '#5F6368', font: { size: 11 }, maxTicksLimit: 6,
+                       callback: (v) => v + 'ms' },
+              grid: { drawOnChartArea: false }, border: { display: false } },
       },
     },
   });
@@ -605,17 +735,18 @@ async function loadReqs() {
   if (!tbody) return;
   tbody.innerHTML = (data.items || []).map(r => `
     <tr>
-      <td>${fmt.ts(r.ts)}</td>
-      <td>${r.model}</td>
-      <td>${upstreamCell(r)}</td>
-      <td>${r.proxy_name || '<span class="badge muted">直连</span>'}</td>
-      <td>${r.status === 200 ? '<span class="badge ok">200</span>' : '<span class="badge fail">' + r.status + '</span>'}</td>
-      <td>${fmt.ms(r.ttfb_ms)}</td>
-      <td>${fmt.ms(r.total_ms)}</td>
-      <td>${fmt.num(r.prompt_tokens)}</td>
-      <td>${fmt.num(r.output_tokens)}</td>
+      <td class="nw muted">${fmt.ts(r.ts)}</td>
+      <td class="truncate" title="${escapeHtml(r.model)}">${escapeHtml(r.model)}</td>
+      <td class="nw">${upstreamCell(r)}</td>
+      <td class="nw truncate">${r.proxy_name ? escapeHtml(r.proxy_name) : '<span class="badge muted">直连</span>'}</td>
+      <td class="nw">${r.status === 200 ? '<span class="badge ok">200</span>' : '<span class="badge fail">' + r.status + '</span>'}</td>
+      <td class="num nw">${fmt.ms(r.ttfb_ms)}</td>
+      <td class="num nw">${fmt.ms(r.total_ms)}</td>
+      <td class="num nw">${fmt.num(r.prompt_tokens)}</td>
+      <td class="num nw">${fmt.num(r.output_tokens)}</td>
       <td><span class="pre">${escapeHtml(r.endpoint)}${r.stream ? ' <span class="badge muted">stream</span>' : ''}</span>
-        ${r.error ? '<div class="pre" style="color:#f87171; margin-top:4px"><b>错误：</b> ' + escapeHtml(r.error) + '</div>' : ''}
+        ${r.error ? '<div class="pre clamp2" style="color:var(--fail);margin-top:4px" title="'
+          + escapeHtml(r.error) + '"><b>错误：</b>' + escapeHtml(r.error) + '</div>' : ''}
       </td>
     </tr>`).join('') || '<tr><td colspan="10" class="empty">还没有请求记录</td></tr>';
   const size = reqPageSize();
@@ -723,16 +854,16 @@ async function loadCookieStatus() {
 async function saveCookie() {
   const msg = document.getElementById('cookieMsg');
   const val = document.getElementById('cookieInput').value.trim();
-  if (!val) { msg.textContent = '请先粘贴 cookie'; msg.style.color = '#f87171'; return; }
+  if (!val) { msg.textContent = '请先粘贴 cookie'; msg.style.color = 'var(--fail)'; return; }
   msg.textContent = '保存中…'; msg.style.color = 'var(--muted)';
   const res = await fetch('/admin/api/cookie', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: val }),
   });
   const d = await res.json().catch(() => ({}));
-  if (!res.ok) { msg.textContent = d.error || ('保存失败 ' + res.status); msg.style.color = '#f87171'; return; }
+  if (!res.ok) { msg.textContent = d.error || ('保存失败 ' + res.status); msg.style.color = 'var(--fail)'; return; }
   document.getElementById('cookieInput').value = '';
-  msg.textContent = '已保存并生效'; msg.style.color = '#4ade80';
+  msg.textContent = '已保存并生效'; msg.style.color = 'var(--ok)';
   await loadCookieStatus();
   await loadRtCfg();   // 模型列表会随之变化（3.1 Pro 出现）
   setTimeout(() => { msg.textContent = ''; }, 3000);
@@ -751,7 +882,7 @@ async function clearCookie() {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie: '' }),
   });
-  if (!res.ok) { msg.textContent = '清除失败'; msg.style.color = '#f87171'; return; }
+  if (!res.ok) { msg.textContent = '清除失败'; msg.style.color = 'var(--fail)'; return; }
   msg.textContent = '已清除'; msg.style.color = 'var(--muted)';
   await loadCookieStatus();
   await loadRtCfg();
@@ -776,12 +907,12 @@ async function saveRtCfg() {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     msg.textContent = '保存失败：' + (data.error || res.status);
-    msg.style.color = '#f87171';
+    msg.style.color = 'var(--fail)';
     return;
   }
   rtCfgCache = data.config;
   msg.textContent = '已保存并生效';
-  msg.style.color = '#4ade80';
+  msg.style.color = 'var(--ok)';
   setTimeout(() => { msg.textContent = ''; }, 3000);
 }
 
@@ -812,7 +943,7 @@ function upstreamCell(r) {
   const same = norm(up).startsWith(norm(r.model).slice(0, 6));
   return same
     ? escapeHtml(up)
-    : '<span class="badge" style="background:#78350f;color:#fcd34d" title="服务端实际使用的模型与请求的不一致">'
+    : '<span class="badge warn" title="服务端实际使用的模型与请求的不一致">'
       + escapeHtml(up) + '</span>';
 }
 
@@ -974,7 +1105,9 @@ async function customKey() {
 function flash(msg) {
   const t = document.createElement('div');
   t.textContent = msg;
-  t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:6px;font-size:13px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+  t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1F1F1F;color:#fff;'
+    + 'padding:12px 20px;border-radius:12px;font-size:13px;z-index:9999;'
+    + 'box-shadow:0 4px 16px rgba(60,64,67,.3);';
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 1800);
 }
@@ -1094,6 +1227,8 @@ function modalForm({ title, desc, fields, submitText = '提交' }) {
 async function switchPage(name) {
   document.querySelectorAll('nav button').forEach(b =>
     b.classList.toggle('active', b.dataset.page === name));
+  const titleEl = document.getElementById('pageTitle');
+  if (titleEl) titleEl.textContent = PAGE_TITLES[name] || name;
   const main = document.getElementById('main');
   main.innerHTML = '<div class="empty">加载中...</div>';
   try {
@@ -1119,25 +1254,89 @@ async function switchPage(name) {
   }
 }
 
+// 侧栏图标（Material Symbols 风格的简化路径，内联避免外部依赖）
+const ICONS = {
+  dashboard: '<path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>',
+  requests: '<path d="M7 5h14v2H7V5zm0 6h14v2H7v-2zm0 6h14v2H7v-2zM3 4.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm0 6a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm0 6a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0z"/>',
+  proxies: '<path d="M12 2a2.5 2.5 0 011 4.79V9h4a2 2 0 012 2v1.21a2.5 2.5 0 11-2 0V11h-4v1.21a2.5 2.5 0 11-2 0V11H7v1.21a2.5 2.5 0 11-2 0V11a2 2 0 012-2h4V6.79A2.5 2.5 0 0112 2z"/>',
+  settings: '<path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>',
+  menu: '<path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>',
+};
+const NAV = [
+  ['dashboard', '概览'],
+  ['requests', '请求记录'],
+  ['proxies', '代理池'],
+  ['settings', '设置'],
+];
+const PAGE_TITLES = {
+  dashboard: '概览', requests: '请求记录', proxies: '代理池', settings: '设置',
+};
+
+function toggleSidebar() {
+  const el = document.querySelector('.sidebar');
+  el.classList.toggle('collapsed');
+  try { localStorage.setItem('sbCollapsed', el.classList.contains('collapsed') ? '1' : ''); } catch (e) {}
+}
+
 function renderShell() {
+  const collapsed = (() => { try { return localStorage.getItem('sbCollapsed') === '1'; } catch (e) { return false; } })();
   document.getElementById('app').innerHTML = `
-    <aside class="sidebar">
-      <div class="brand"><span class="spark"></span>gemini-web2api</div>
+    <aside class="sidebar${collapsed ? ' collapsed' : ''}">
+      <div class="side-top">
+        <button class="icon-btn" onclick="toggleSidebar()" title="收起 / 展开" aria-label="收起或展开侧边栏">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">${ICONS.menu}</svg>
+        </button>
+        <span class="brand-text"><span class="spark"></span>gemini-web2api</span>
+      </div>
       <nav>
-        <button data-page="dashboard" onclick="switchPage('dashboard')">概览</button>
-        <button data-page="requests" onclick="switchPage('requests')">请求记录</button>
-        <button data-page="proxies" onclick="switchPage('proxies')">代理池</button>
-        <button data-page="settings" onclick="switchPage('settings')">设置</button>
+        ${NAV.map(([k, label]) => `
+          <button data-page="${k}" onclick="switchPage('${k}')" title="${label}">
+            <svg viewBox="0 0 24 24">${ICONS[k]}</svg>
+            <span class="nav-label">${label}</span>
+          </button>`).join('')}
       </nav>
       <div class="side-foot">
-        <div id="sideStat">—</div>
-        <div style="margin-top:8px"><a href="#" onclick="doLogout();return false"
-          style="color:var(--muted)">退出登录</a></div>
+        <div id="sideStat"></div>
+        <div class="sf-sep"></div>
+        <a href="#" onclick="doLogout();return false">退出登录</a>
       </div>
     </aside>
-    <main id="main"></main>
+    <div class="content">
+      <div class="topbar">
+        <h1 class="page-title" id="pageTitle">概览</h1>
+        <div class="topbar-right">
+          <span class="dot" id="healthDot"></span>
+          <span class="muted" id="healthText">运行中</span>
+        </div>
+      </div>
+      <main id="main"></main>
+    </div>
   `;
   switchPage('dashboard');
+  loadSideStat();
+}
+
+// 侧栏底部放真正有用的服务状态，而不是一个占位破折号
+async function loadSideStat() {
+  const box = document.getElementById('sideStat');
+  if (!box) return;
+  try {
+    const [root, ck, usage] = await Promise.all([
+      fetch('/').then(r => r.json()).catch(() => null),
+      api('/admin/api/cookie').catch(() => null),
+      api('/admin/api/usage').catch(() => null),
+    ]);
+    const dot = document.getElementById('healthDot');
+    const ht = document.getElementById('healthText');
+    if (dot) dot.classList.toggle('bad', !root);
+    if (ht) ht.textContent = root ? '运行中' : '无法连接';
+    box.innerHTML = [
+      ['版本', root ? 'v' + root.version : '—'],
+      ['模型', root ? root.models.length + ' 个' : '—'],
+      ['Cookie', ck && ck.configured ? '已配置' : '匿名'],
+      ['IP slot', usage ? (usage.items || []).length + ' 个' : '—'],
+    ].map(([k, v]) => `<div class="sf-row"><span>${k}</span><b>${v}</b></div>`).join('');
+  } catch (e) { box.innerHTML = ''; }
 }
 
 function renderLogin() {
