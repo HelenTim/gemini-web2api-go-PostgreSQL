@@ -199,6 +199,7 @@
     background: var(--surface-hi); border: 1px solid transparent;
     border-radius: 10px; padding: 8px 12px; outline: none; transition: border-color .15s;
   }
+  textarea { width: 100%; font-family: var(--mono); font-size: 12px; resize: vertical; }
   select { cursor: pointer; }
   select:focus, input:focus, textarea:focus { border-color: var(--g-blue); background: var(--card); }
 
@@ -219,6 +220,12 @@
   .muted { color: var(--muted); }
   .truncate { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hint, .desc { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+  /* 卡片抬头下面那句说明，统一走这个类，不再每处写一遍 inline style */
+  .lede { color: var(--muted); font-size: 12.5px; line-height: 1.65; margin-bottom: 12px; }
+  /* 只读的键值表：没有表头，左列窄且不换行 */
+  table.kv td { padding: 9px 0; font-size: 12.5px; }
+  table.kv td:first-child { width: 92px; color: var(--muted); white-space: nowrap;
+                            padding-right: 12px; }
   .err { color: var(--fail); font-size: 13px; margin-top: 10px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .field { margin-bottom: 14px; }
@@ -234,14 +241,29 @@
                        margin-top: 8px; padding: 12px 14px; background: var(--bg);
                        border-radius: 12px; }
 
-  /* ── 运行时配置表单 ─────────────────────────────────────────────────── */
-  .rtrow { display: grid; grid-template-columns: 150px 190px 1fr; gap: 14px;
-           align-items: center; padding: 9px 0; border-bottom: 1px solid var(--outline-soft); }
-  .rtrow:last-child { border-bottom: none; }
-  .rtrow label { font-size: 13px; }
-  .rtrow input[type=text], .rtrow input[type=number], .rtrow select { width: 100%; }
-  .rtrow input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--nav-on-fg); }
-  .rthint { color: var(--muted); font-size: 12px; }
+  /* ── 运行时配置表单 ─────────────────────────────────────────────────
+     原来一项一整行（标签 | 输入 | 提示），12 项就是 12 行、右边三分之二空着，
+     整页拉到 2200px。改成按语义分组、组内自适应多列，标签压在输入框上方。 */
+  .cfg-group { margin-bottom: 22px; }
+  .cfg-group:last-of-type { margin-bottom: 0; }
+  .cfg-group > h3 { font-size: 12px; font-weight: 500; color: var(--muted);
+                    margin-bottom: 12px; padding-bottom: 7px;
+                    border-bottom: 1px solid var(--outline-soft); }
+  .cfg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
+              gap: 16px 18px; }
+  .cfg-item { min-width: 0; }
+  .cfg-item > label { display: block; font-size: 12.5px; color: var(--text-2); margin-bottom: 6px; }
+  .cfg-item input[type=text], .cfg-item input[type=number], .cfg-item select { width: 100%; }
+  .cfg-item.wide { grid-column: 1 / -1; }
+  .cfg-item.check { display: flex; align-items: center; gap: 10px;
+                  margin-top: 25px; }  /* 25px = 标签行高 + 下边距，对齐同行输入框 */
+  .cfg-item.check > label { margin: 0; }
+  .cfg-item input[type=checkbox] { width: 18px; height: 18px; flex: none;
+                                   accent-color: var(--nav-on-fg); }
+  .rthint { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 5px; }
+  .cfg-item.check .rthint { margin: 0; }
+  .cfg-actions { display: flex; gap: 8px; align-items: center; margin-top: 20px;
+                 padding-top: 16px; border-top: 1px solid var(--outline-soft); }
 
   /* ── signature：距离封禁红线 ─────────────────────────────────────────
      实测单出口约 85 次请求后被 Google 重定向到 sorry 页。这个数字是本项目
@@ -317,7 +339,6 @@
     .topbar { padding: 0 14px; }
     main { padding: 4px 14px 28px; }
     .grid-2 { grid-template-columns: 1fr; }
-    .rtrow { grid-template-columns: 1fr; gap: 5px; }
     .chart-wrap { height: 210px; }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -581,94 +602,89 @@ const pages = {
 
   settings: async () => {
     const k = await api('/admin/api/apikey');
-    const usage = await api('/admin/api/usage');
-    const limits = (usage.items[0] || {});
     return `
-      <div class="panel">
-        <h2>API Key（用于 /v1/* 接口鉴权）</h2>
-        <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">
-          ${k.locked
-            ? '已被启动参数 <code>--api-key</code> 或环境变量 <code>API_KEY</code> 锁定，需修改部署配置才能更换。'
-            : '可在线管理 — 重新生成或自定义。'}
-        </p>
-        <div class="row" style="margin-bottom: 14px;">
-          <input id="apiKeyView" type="password" value="${escapeHtml(k.key)}"
-                 style="flex: 1; min-width: 320px; font-family: 'Consolas', monospace;" readonly />
-          <button class="btn muted" onclick="toggleKeyVis()">显示</button>
-          <button class="btn muted" onclick="copyKey()">复制</button>
-        </div>
-        ${k.locked ? '' : `
-          <div class="row">
-            <button class="btn" onclick="rotateKey()">生成随机 Key</button>
-            <button class="btn muted" onclick="customKey()">自定义 Key</button>
+      <div class="grid-main">
+        <div class="panel">
+          <h2>运行时配置</h2>
+          <p class="lede">
+            改完点保存<b>立刻生效</b>，不用重启。存在数据库里，优先级高于
+            <code>config.json</code> 和命令行参数。
+          </p>
+          <div id="rtCfgForm"></div>
+          <div class="cfg-actions">
+            <button class="btn" onclick="saveRtCfg()">保存并生效</button>
+            <button class="btn muted" onclick="loadRtCfg()">放弃修改</button>
+            <span id="rtCfgMsg" style="font-size:12.5px;"></span>
           </div>
-        `}
-        <div style="margin-top: 16px; padding: 12px; background: var(--bg); border-radius: 6px;">
-          <div style="color: var(--muted); font-size: 12px; margin-bottom: 6px;">使用示例：</div>
-          <pre class="pre" style="margin: 0; font-size: 12px;">curl http://your-host/v1/chat/completions \\
-  -H "Authorization: Bearer YOUR_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"model":"gemini-3.6-flash","messages":[{"role":"user","content":"你好"}]}'</pre>
         </div>
-      </div>
-      <div class="panel">
-        <h2>运行时配置</h2>
-        <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">
-          改完点保存<b>立刻生效</b>，不用重启。存在数据库里，优先级高于 <code>config.json</code> 和命令行参数。
-        </p>
-        <div id="rtCfgForm"></div>
-        <div style="margin-top: 14px; display: flex; gap: 8px; align-items: center;">
-          <button class="btn" onclick="saveRtCfg()">保存并生效</button>
-          <button class="btn muted" onclick="loadRtCfg()">放弃修改</button>
-          <span id="rtCfgMsg" style="font-size: 12.5px;"></span>
-        </div>
-        <p style="color: var(--muted); margin-top: 14px; font-size: 12px;">
-          实测：单 IP 累积约 100 次请求会触发 Google 拦截 6-24 小时。默认 RPH=80 留 20% 余量。
-          要支撑更高产能 → 在「代理池」页面加代理（每个代理是独立的 slot）。
-        </p>
-      </div>
 
-      <div class="card">
-        <h2>Google 账号 Cookie</h2>
-        <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">
-          挂上之后请求走登录态，<code>gemini-3.1-pro</code> 才会出现在模型列表里
-          （但免费账号仍会被降级，只有付费订阅可能真路由到 Pro）。保存即生效，不用重启。
-        </p>
-        <div id="cookieStatus" style="margin-bottom: 10px;"></div>
-        <textarea id="cookieInput" rows="3" placeholder="从 gemini.google.com 复制的完整 cookie，形如：SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=..."
-          style="width:100%; padding:8px; background:var(--bg2); color:var(--fg);
-                 border:1px solid var(--outline); border-radius:10px; font-size:12px;
-                 font-family:ui-monospace,monospace; resize:vertical;"></textarea>
-        <div style="margin-top: 10px; display:flex; gap:8px; align-items:center;">
-          <button class="btn" onclick="saveCookie()">保存并生效</button>
-          <button class="btn danger" onclick="clearCookie()">清除</button>
-          <span id="cookieMsg" style="font-size:12.5px;"></span>
-        </div>
-        <p style="color: var(--muted); margin-top: 10px; font-size: 12px;">
-          获取方式：浏览器登录 gemini.google.com → F12 → Application → Cookies →
-          选 <code>https://gemini.google.com</code> → 全选复制。已保存的值不会回显。
-        </p>
-      </div>
+        <div class="stack">
+          <div class="card">
+            <h2>API Key</h2>
+            <p class="lede">
+              ${k.locked
+                ? '已被 <code>--api-key</code> / <code>API_KEY</code> 锁定，改部署配置才能换。'
+                : '给 <code>/v1/*</code> 接口鉴权，可随时轮换。'}
+            </p>
+            <div class="row" style="margin-bottom:10px;">
+              <input id="apiKeyView" type="password" value="${escapeHtml(k.key)}"
+                     style="flex:1; min-width:0; font-family:ui-monospace,monospace;" readonly />
+              <button class="btn muted" onclick="toggleKeyVis()">显示</button>
+              <button class="btn muted" onclick="copyKey()">复制</button>
+            </div>
+            ${k.locked ? '' : `
+              <div class="row" style="margin-bottom:10px;">
+                <button class="btn muted" onclick="rotateKey()">生成随机 Key</button>
+                <button class="btn muted" onclick="customKey()">自定义</button>
+              </div>`}
+            <details class="note">
+              <summary>调用示例</summary>
+              <div class="body">
+                <pre class="pre" style="margin:0; font-size:11.5px;">curl http://your-host/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini-3.6-flash",
+       "messages":[{"role":"user","content":"你好"}]}'</pre>
+              </div>
+            </details>
+          </div>
 
-      <div class="card">
-        <h2>部署配置（只读）</h2>
-        <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">
-          这些改了本来就要重启进程，所以放在 <code>docker-compose.yml</code> 里管，
-          不做成网页表单——凭证也不该经过浏览器。
-        </p>
-        <table id="deployTable">
-          <thead><tr><th>项</th><th>当前值</th><th>怎么改</th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div class="panel">
-        <h2>会话</h2>
-        <p>当前以 cookie 会话登录。</p>
-        <button class="btn danger" onclick="doLogout()">退出登录</button>
-      </div>
-      <div class="panel">
-        <h2>关于</h2>
-        <p>gemini-web2api-go 管理面板 · 单二进制 · SQLite + Chrome 146 指纹模拟 · tiktoken cl100k_base 计算 token。</p>
+          <div class="card">
+            <h2>Google 账号 Cookie</h2>
+            <p class="lede">
+              挂上后请求走登录态，<code>gemini-3.1-pro</code> 才会出现在模型列表里。保存即生效。
+            </p>
+            <div id="cookieStatus" style="margin-bottom:10px;"></div>
+            <textarea id="cookieInput" rows="3" placeholder="SID=...; HSID=...; SAPISID=...; __Secure-1PSID=..."></textarea>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn" onclick="saveCookie()">保存并生效</button>
+              <button class="btn danger" onclick="clearCookie()">清除</button>
+              <span id="cookieMsg" style="font-size:12.5px;"></span>
+            </div>
+            <details class="note" style="margin-top:10px; margin-bottom:0;">
+              <summary>怎么取 cookie</summary>
+              <div class="body">
+                浏览器登录 gemini.google.com → F12 → Application → Cookies →
+                选 <code>https://gemini.google.com</code> → 全选复制。已保存的值不会回显。
+                免费账号即便登录也会被降级到 Flash，只有付费订阅可能真路由到 Pro。
+              </div>
+            </details>
+          </div>
+
+          <div class="card">
+            <h2>部署配置</h2>
+            <p class="lede">
+              改这些本来就要重启进程，所以放在 <code>docker-compose.yml</code> 里管，
+              不做成网页表单——凭证也不该经过浏览器。
+            </p>
+            <table id="deployTable" class="kv">
+              <tbody></tbody>
+            </table>
+            <p class="lede" style="margin:14px 0 0;">
+              gemini-web2api-go · 单二进制 · SQLite · Chrome 146 指纹 · tiktoken cl100k_base 计费
+            </p>
+          </div>
+        </div>
       </div>
     `;
   },
@@ -802,19 +818,50 @@ async function loadReqs() {
 // ── 运行时配置 ───────────────────────────────────────────────────────────────
 // 字段定义跟后端 RuntimeConfig 一一对应；范围与后端 validateRuntimeConfig 一致，
 // 前端只做提示，真正的校验在后端（浏览器里的限制随便绕）。
-const RT_FIELDS = [
-  { k: 'default_model',       label: '默认模型',     type: 'select', hint: '客户端没传 model 时用哪个' },
-  { k: 'per_ip_concurrent',   label: '每 slot 并发',  type: 'int', min: 0, max: 1000,   hint: '同一时刻最多几个请求在飞，0=不限' },
-  { k: 'per_ip_rpm',          label: '每 slot RPM',   type: 'int', min: 0, max: 10000,  hint: '滚动 60 秒窗口上限，0=不限' },
-  { k: 'per_ip_rph',          label: '每 slot RPH',   type: 'int', min: 0, max: 100000, hint: '滚动 1 小时窗口上限，0=不限' },
-  { k: 'retry_attempts',      label: '重试次数',      type: 'int', min: 1, max: 10,     hint: '含首次，流式已吐字后不再重试' },
-  { k: 'retry_delay_sec',     label: '重试间隔（秒）', type: 'int', min: 0, max: 60 },
-  { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
-  { k: 'retention_days',      label: '明细保留（天）', type: 'int', min: 1, max: 3650,  hint: '过期只删明细，聚合数据永久保留' },
-  { k: 'impersonate',         label: 'TLS 指纹',      type: 'text', hint: 'chrome_146 / chrome_144 / firefox_147 / safari_16_0 …' },
-  { k: 'gemini_bl',           label: 'Gemini bl 版本', type: 'text', hint: '上游前端版本号，过期时改这里' },
-  { k: 'proxy',               label: '静态代理',      type: 'text', hint: '代理池为空时的兜底；一般用「代理池」页面配' },
-  { k: 'log_requests',        label: '打印请求日志',   type: 'bool' },
+// 按语义分组，组内自适应多列。分组的依据是"改这一项时在想什么"：
+// 调产能 / 调容错 / 调怎么发请求 / 调留多少数据，而不是按字段类型堆在一起。
+const RT_GROUPS = [
+  {
+    title: '流量控制 · 每个 IP slot 独立计数',
+    fields: [
+      { k: 'per_ip_concurrent', label: '并发', type: 'int', min: 0, max: 1000,
+        hint: '同一时刻最多几个请求在飞，0=不限' },
+      { k: 'per_ip_rpm', label: 'RPM', type: 'int', min: 0, max: 10000,
+        hint: '滚动 60 秒窗口上限，0=不限' },
+      { k: 'per_ip_rph', label: 'RPH', type: 'int', min: 0, max: 100000,
+        hint: '滚动 1 小时上限。实测单出口约 85 次就被拦，默认 80 是照这个留的余量' },
+    ],
+  },
+  {
+    title: '重试与超时',
+    fields: [
+      { k: 'retry_attempts', label: '重试次数', type: 'int', min: 1, max: 10,
+        hint: '含首次；流式已吐字后不再重试' },
+      { k: 'retry_delay_sec', label: '重试间隔（秒）', type: 'int', min: 0, max: 60 },
+      { k: 'request_timeout_sec', label: '上游超时（秒）', type: 'int', min: 5, max: 600 },
+    ],
+  },
+  {
+    title: '请求行为',
+    fields: [
+      { k: 'default_model', label: '默认模型', type: 'select',
+        hint: '客户端没传 model 时用哪个' },
+      { k: 'impersonate', label: 'TLS 指纹', type: 'text',
+        hint: 'chrome_146 / chrome_144 / firefox_147 / safari_16_0 …' },
+      { k: 'gemini_bl', label: 'Gemini bl 版本', type: 'text',
+        hint: '上游前端版本号。请求大面积失败时先看这里是不是过期了' },
+      { k: 'proxy', label: '静态代理', type: 'text', wide: true,
+        hint: '代理池为空时的兜底。一般直接用「代理池」页面配，那里每个代理是独立 slot' },
+    ],
+  },
+  {
+    title: '数据与日志',
+    fields: [
+      { k: 'retention_days', label: '明细保留（天）', type: 'int', min: 1, max: 3650,
+        hint: '过期只删明细，聚合数据永久保留' },
+      { k: 'log_requests', label: '打印请求日志', type: 'bool' },
+    ],
+  },
 ];
 
 let rtCfgCache = null, rtModels = [];
@@ -823,34 +870,53 @@ async function loadRtCfg() {
   const data = await api('/admin/api/config');
   if (!data) return;
   rtCfgCache = data.config; rtModels = data.models || [];
-  document.getElementById('rtCfgForm').innerHTML = RT_FIELDS.map(f => {
-    const v = rtCfgCache[f.k];
-    let input;
-    if (f.type === 'bool') {
-      input = `<input type="checkbox" id="rt_${f.k}" ${v ? 'checked' : ''}>`;
-    } else if (f.type === 'select') {
-      input = `<select id="rt_${f.k}">` + rtModels.map(m =>
-        `<option value="${escapeHtml(m)}" ${m === v ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('') + '</select>';
-    } else if (f.type === 'int') {
-      input = `<input type="number" id="rt_${f.k}" value="${v}" min="${f.min}" max="${f.max}">`;
-    } else {
-      input = `<input type="text" id="rt_${f.k}" value="${escapeHtml(String(v ?? ''))}">`;
-    }
-    return `<div class="rtrow">
-      <label for="rt_${f.k}">${f.label}</label>
-      <div>${input}</div>
-      <div class="rthint">${f.hint ? escapeHtml(f.hint) : ''}</div>
-    </div>`;
-  }).join('');
+  document.getElementById('rtCfgForm').innerHTML = RT_GROUPS.map(g => `
+    <div class="cfg-group">
+      <h3>${escapeHtml(g.title)}</h3>
+      <div class="cfg-grid">
+        ${g.fields.map(f => {
+          const v = rtCfgCache[f.k];
+          let input;
+          if (f.type === 'bool') {
+            input = `<input type="checkbox" id="rt_${f.k}" ${v ? 'checked' : ''}>`;
+          } else if (f.type === 'select') {
+            input = `<select id="rt_${f.k}">` + rtModels.map(m =>
+              `<option value="${escapeHtml(m)}" ${m === v ? 'selected' : ''}>${escapeHtml(m)}</option>`
+            ).join('') + '</select>';
+          } else if (f.type === 'int') {
+            input = `<input type="number" id="rt_${f.k}" value="${v}" min="${f.min}" max="${f.max}">`;
+          } else {
+            input = `<input type="text" id="rt_${f.k}" value="${escapeHtml(String(v ?? ''))}">`;
+          }
+          // 复选框把标签放右边，跟输入框类字段的竖排区分开
+          if (f.type === 'bool') {
+            return `<div class="cfg-item check">
+              ${input}<label for="rt_${f.k}">${f.label}</label>
+              ${f.hint ? `<span class="rthint">${escapeHtml(f.hint)}</span>` : ''}
+            </div>`;
+          }
+          return `<div class="cfg-item${f.wide ? ' wide' : ''}">
+            <label for="rt_${f.k}">${f.label}</label>
+            ${input}
+            ${f.hint ? `<div class="rthint">${escapeHtml(f.hint)}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
 
+  // 三列（项/值/怎么改）挤在窄栏里读不动，第三列换成 title 悬浮
   const d = data.deploy || {};
   document.querySelector('#deployTable tbody').innerHTML = [
-    ['监听地址', `${escapeHtml(d.host || '')}:${d.port}`, 'compose 的 <code>ports</code> + <code>--port</code>'],
-    ['数据库路径', escapeHtml(d.db_path || ''), 'compose 的 <code>volumes</code> + <code>--db</code>'],
-    ['Cookie 文件', d.cookie_file ? escapeHtml(d.cookie_file) : '<span class="badge muted">未配置</span>', 'compose 挂载 + <code>--cookie-file</code>'],
-    ['面板鉴权', d.admin_auth ? '<span class="badge ok">已开启</span>' : '<span class="badge fail">未设 token</span>', 'compose 的 <code>ADMIN_TOKEN</code>'],
-    ['API Key', '见上方「API Key」卡片', 'compose 的 <code>API_KEY</code>（锁定）或面板轮换'],
-  ].map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('');
+    ['监听', `${escapeHtml(d.host || '')}:${d.port}`, 'compose 的 ports + --port'],
+    ['数据库', escapeHtml(d.db_path || ''), 'compose 的 volumes + --db'],
+    ['Cookie 文件', d.cookie_file ? escapeHtml(d.cookie_file) : '<span class="badge muted">未配置</span>',
+     'compose 挂载 + --cookie-file'],
+    ['面板鉴权', d.admin_auth ? '<span class="badge ok">已开启</span>'
+                             : '<span class="badge fail">未设 token</span>', 'compose 的 ADMIN_TOKEN'],
+    ['API Key', d.api_key_locked ? '<span class="badge">部署锁定</span>'
+                                 : '<span class="badge ok">面板可轮换</span>', 'compose 的 API_KEY'],
+  ].map(r => `<tr><td title="${escapeHtml(r[2])}">${r[0]}</td>
+      <td class="pre" style="word-break:break-all;">${r[1]}</td></tr>`).join('');
 }
 
 async function loadCookieStatus() {
@@ -910,7 +976,7 @@ async function clearCookie() {
 async function saveRtCfg() {
   const msg = document.getElementById('rtCfgMsg');
   const body = {};
-  for (const f of RT_FIELDS) {
+  for (const f of RT_GROUPS.flatMap(g => g.fields)) {
     const el = document.getElementById('rt_' + f.k);
     if (!el) continue;
     body[f.k] = f.type === 'bool' ? el.checked

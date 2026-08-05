@@ -625,6 +625,8 @@ func handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 				"db_path":     cfg.DBPath,
 				"cookie_file": cfg.CookieFile,
 				"admin_auth":  cfg.AdminToken != "",
+				// 面板的部署配置表要展示 Key 是否被启动参数锁死
+				"api_key_locked": apiKeyLocked,
 			},
 		})
 	case http.MethodPut:
