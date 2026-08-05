@@ -113,7 +113,12 @@ Gemini's backend only recognises three models (list comes from
 |---|---|
 | `gemini-3.6-flash` | All-around, default |
 | `gemini-3.5-flash-lite` | Fastest, lightweight |
-| `gemini-3.1-pro` | Not reachable — silently downgraded, see below |
+| `gemini-3.1-pro` | **Only exposed when `--cookie-file` is set**, see below |
+
+Without a cookie, `/v1/models` returns only the first two and asking for
+`gemini-3.1-pro` fails with an explanation. Anonymous requests for it are always
+silently downgraded to 3.5 Flash-Lite — better to fail at model selection than to
+hand back a reply that "succeeded" but isn't Pro.
 
 These three are the only ones exposed. The legacy names `gemini-3.5-flash`,
 `gemini-3.5-flash-thinking`, `gemini-3.5-flash-thinking-lite`, `gemini-auto` and

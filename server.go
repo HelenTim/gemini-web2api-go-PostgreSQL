@@ -21,7 +21,7 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 
 func handleModels(w http.ResponseWriter, r *http.Request) {
 	var data []map[string]interface{}
-	for name, c := range Models {
+	for name, c := range availableModels() {
 		data = append(data, map[string]interface{}{
 			"id":          name,
 			"object":      "model",
@@ -35,7 +35,7 @@ func handleModels(w http.ResponseWriter, r *http.Request) {
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
 	var modelNames []string
-	for n := range Models {
+	for n := range availableModels() {
 		modelNames = append(modelNames, n)
 	}
 	writeJSON(w, 200, map[string]interface{}{

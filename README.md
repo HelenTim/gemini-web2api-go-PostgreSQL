@@ -113,7 +113,11 @@ Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=
 |---|---|
 | `gemini-3.6-flash` | 全方位，默认 |
 | `gemini-3.5-flash-lite` | 极速、轻量 |
-| `gemini-3.1-pro` | 拿不到，会被静默降级，见下 |
+| `gemini-3.1-pro` | **只在配了 `--cookie-file` 时才暴露**，见下 |
+
+没配 cookie 时 `/v1/models` 只返回前两个，选 `gemini-3.1-pro` 会直接报错并说明
+原因。因为匿名请求它必然被静默降级成 3.5 Flash-Lite——与其让客户端拿到一个
+"成功但其实不是 Pro"的回复，不如在选型时就失败。
 
 只暴露这三个。旧的 `gemini-3.5-flash`、`gemini-3.5-flash-thinking`、
 `gemini-3.5-flash-thinking-lite`、`gemini-auto`、`gemini-flash-lite` **已移除**

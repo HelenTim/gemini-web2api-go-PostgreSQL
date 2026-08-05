@@ -150,7 +150,7 @@ func main() {
 		proxyStatus = "none"
 	}
 	var modelNames []string
-	for n := range Models {
+	for n := range availableModels() {
 		modelNames = append(modelNames, n)
 	}
 	sort.Strings(modelNames)

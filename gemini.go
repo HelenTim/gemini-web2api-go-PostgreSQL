@@ -43,6 +43,29 @@ var Models = map[string]ModelConfig{
 	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Not reachable: downgraded to Flash-Lite anonymously, to 3.6 Flash even when signed in"},
 }
 
+// hasCookie 表示是否配置了 Google 账号 cookie。
+func hasCookie() bool { return cfg.CookieFile != "" }
+
+// availableModels 返回当前配置下值得暴露的模型。
+//
+// 没配 cookie 时排除 3.1 Pro：实测匿名请求它会被静默降级成 3.5 Flash-Lite，
+// 客户端还以为自己用上了 Pro。与其让它"成功"，不如直接不提供、让选型时就报错。
+// 配了 cookie 也不保证能用——免费账号照样被降级成「3.6 Flash 扩展」，只有付费
+// 订阅可能真的路由到 Pro（未验证），所以有 cookie 时只是把选择权交回给部署者。
+func availableModels() map[string]ModelConfig {
+	if hasCookie() {
+		return Models
+	}
+	out := make(map[string]ModelConfig, len(Models))
+	for k, v := range Models {
+		if k == "gemini-3.1-pro" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // resolveModel maps a model name to its config.
 //
 // "name@think=N" 后缀会被剥掉并忽略。旧版本把它写进 inner[17] 当思考深度，
@@ -53,8 +76,14 @@ func resolveModel(modelName string) (string, ModelConfig, error) {
 	if idx := strings.Index(modelName, "@think="); idx >= 0 {
 		modelName = modelName[:idx]
 	}
-	mc, ok := Models[modelName]
+	mc, ok := availableModels()[modelName]
 	if !ok {
+		if _, exists := Models[modelName]; exists && !hasCookie() {
+			return "", ModelConfig{}, fmt.Errorf(
+				"%s is unavailable without a Google account cookie: anonymous requests for it "+
+					"are silently downgraded to 3.5 Flash-Lite. Start with --cookie-file to enable it",
+				modelName)
+		}
 		return "", ModelConfig{}, fmt.Errorf("unknown model: %s", modelName)
 	}
 	return modelName, mc, nil

@@ -7,6 +7,9 @@ import (
 
 // 确认每个模型名解析出的 hex id 和 header 值正确。
 func TestModelHeader(t *testing.T) {
+	cfg.CookieFile = "dummy-cookie.txt" // 让 3.1 Pro 可选，见 TestProHiddenWithoutCookie
+	defer func() { cfg.CookieFile = "" }()
+
 	cases := []struct{ name, wantHex string }{
 		{"gemini-3.6-flash", hexFlash36},
 		{"gemini-3.5-flash-lite", hexFlashLite},
@@ -221,5 +224,40 @@ func TestExtractUpstreamModel(t *testing.T) {
 	// 被拒的响应没有模型名，不能瞎猜
 	if got := extractUpstreamModel(rejectedRaw); got != "" {
 		t.Errorf("被拒响应应返回空, got %q", got)
+	}
+}
+
+// 没配 cookie 时 3.1 Pro 必然被静默降级成 Flash-Lite，不如干脆不暴露：
+// 让客户端在选型时就拿到明确错误，而不是拿到一个"成功但其实不是 Pro"的回复。
+func TestProHiddenWithoutCookie(t *testing.T) {
+	cfg.CookieFile = ""
+	if _, ok := availableModels()["gemini-3.1-pro"]; ok {
+		t.Error("无 cookie 时不该暴露 3.1 Pro")
+	}
+	if len(availableModels()) != 2 {
+		t.Errorf("无 cookie 时应只剩 2 个模型, got %d", len(availableModels()))
+	}
+	_, _, err := resolveModel("gemini-3.1-pro")
+	if err == nil {
+		t.Fatal("无 cookie 时选 3.1 Pro 应该报错")
+	}
+	// 错误信息要说清为什么、以及怎么办，不能只是 unknown model
+	if !strings.Contains(err.Error(), "cookie") ||
+		!strings.Contains(err.Error(), "downgraded") {
+		t.Errorf("错误信息没解释原因和解法: %v", err)
+	}
+
+	cfg.CookieFile = "dummy-cookie.txt"
+	defer func() { cfg.CookieFile = "" }()
+	if _, ok := availableModels()["gemini-3.1-pro"]; !ok {
+		t.Error("配了 cookie 时应暴露 3.1 Pro")
+	}
+	if _, _, err := resolveModel("gemini-3.1-pro"); err != nil {
+		t.Errorf("配了 cookie 时不该报错: %v", err)
+	}
+	// 真正不存在的模型仍然是 unknown model，不能被 cookie 提示盖掉
+	if _, _, err := resolveModel("no-such-model"); err == nil ||
+		!strings.Contains(err.Error(), "unknown model") {
+		t.Errorf("未知模型应报 unknown model, got %v", err)
 	}
 }
