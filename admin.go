@@ -126,6 +126,7 @@ func handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	}
 	stats["prompt_tokens"] = sumPT
 	stats["output_tokens"] = sumOT
+	stats["error_breakdown"] = errorBreakdown(since)
 
 	// per-model breakdown
 	rows, _ := getDB().Query(`SELECT model, COUNT(*),
@@ -703,4 +704,71 @@ func handleAdminCookie(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
 	}
+}
+
+// classifyError 把 requests.error 归到几个可行动的类别。
+//
+// 分类的意义在于"看到之后该做什么不一样"：上游瞬时拒绝只能重试、代理层失败
+// 该换代理或熔断、slot 满说明该加代理、协议错误才需要看代码。全混在一列原始
+// 错误串里，排查时分不出是被限流了还是真出故障。
+func classifyError(errStr string) string {
+	switch {
+	case errStr == "":
+		return ""
+	case strings.Contains(errStr, "no content frame"):
+		// 上游返回 200 但一个内容帧都没有。实测是瞬时拒绝，隔几分钟自行恢复，
+		// 跟频率/并发/累积次数都无关，重试即可。
+		return "upstream_rejected"
+	case strings.Contains(errStr, "slot full") || strings.Contains(errStr, "limit reached"):
+		return "rate_limited_local"
+	case strings.Contains(errStr, "upstream HTTP 302"), strings.Contains(errStr, "sorry"):
+		return "blocked_sorry"
+	case strings.Contains(errStr, "upstream HTTP 429"):
+		return "upstream_429"
+	case strings.Contains(errStr, "upstream HTTP"):
+		return "upstream_http_error"
+	case strings.Contains(errStr, "unknown model"), strings.Contains(errStr, "not supported"):
+		return "bad_request"
+	default:
+		// 连不上代理 / DNS / TLS 握手失败之类
+		return "network"
+	}
+}
+
+// errorBreakdown 统计窗口内各类错误的次数。
+func errorBreakdown(since int64) []map[string]interface{} {
+	rows, err := getDB().Query(
+		`SELECT IFNULL(error,''), COUNT(*) FROM requests
+         WHERE ts >= ? AND status <> 200 GROUP BY error`, since)
+	if err != nil || rows == nil {
+		return nil
+	}
+	defer rows.Close()
+	agg := map[string]int{}
+	sample := map[string]string{}
+	for rows.Next() {
+		var e string
+		var c int
+		if rows.Scan(&e, &c) != nil {
+			continue
+		}
+		k := classifyError(e)
+		if k == "" {
+			continue
+		}
+		agg[k] += c
+		if _, ok := sample[k]; !ok {
+			sample[k] = truncate(e, 120)
+		}
+	}
+	var out []map[string]interface{}
+	for k, c := range agg {
+		out = append(out, map[string]interface{}{
+			"kind": k, "count": c, "sample": sample[k],
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["count"].(int) > out[j]["count"].(int)
+	})
+	return out
 }

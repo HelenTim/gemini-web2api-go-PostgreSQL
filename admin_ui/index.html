@@ -245,6 +245,24 @@ const pages = {
           </table>
         </div>
       </div>
+
+      <div class="card">
+        <h2>错误分类（近 ${stats.window_hours || 24}h）</h2>
+        <p style="color: var(--muted); margin-bottom: 10px; font-size: 12.5px;">
+          按"看到之后该做什么"归类，而不是堆一列原始错误串。
+        </p>
+        <table>
+          <thead><tr><th>类型</th><th>次数</th><th>含义 / 该怎么办</th></tr></thead>
+          <tbody>
+            ${(stats.error_breakdown || []).map(e => `<tr>
+              <td><span class="badge ${ERR_BADGE[e.kind] || 'muted'}">${escapeHtml(e.kind)}</span></td>
+              <td>${e.count}</td>
+              <td style="font-size:12.5px">${ERR_DESC[e.kind] || ''}
+                <div class="pre" style="margin-top:4px;color:var(--muted);font-size:11.5px">${escapeHtml(e.sample || '')}</div></td>
+            </tr>`).join('') || '<tr><td colspan="3" class="empty">窗口内没有失败</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     `;
   },
 
@@ -620,6 +638,20 @@ async function saveRtCfg() {
   msg.style.color = '#4ade80';
   setTimeout(() => { msg.textContent = ''; }, 3000);
 }
+
+const ERR_BADGE = {
+  upstream_rejected: 'muted', rate_limited_local: 'muted', bad_request: 'muted',
+  blocked_sorry: 'fail', upstream_429: 'fail', upstream_http_error: 'fail', network: 'fail',
+};
+const ERR_DESC = {
+  upstream_rejected: '上游返回 200 但没有内容帧。实测是瞬时拒绝，隔几分钟自愈，跟频率/并发/累积次数都无关 —— 重试即可，不用调限流。',
+  rate_limited_local: '本地限流挡下的（slot 满）。要更高产能就在「代理池」加代理。',
+  blocked_sorry: '被 Google 重定向到 sorry/index，该出口 IP 进了黑名单。换代理，6-24 小时才恢复。',
+  upstream_429: '上游直接 429。同样是出口 IP 嫌疑，换代理。',
+  upstream_http_error: '上游返回非 200 的其它状态码，可能是协议变更或临时故障。',
+  network: '连不上代理 / DNS / TLS 握手失败。检查代理可用性 —— 实测代理服务商出口质量参差，劣质出口会连续失败。',
+  bad_request: '客户端请求本身有问题（模型名不存在、传了不支持的字段）。',
+};
 
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

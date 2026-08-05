@@ -262,3 +262,25 @@ func TestProHiddenWithoutCookie(t *testing.T) {
 		t.Errorf("未知模型应报 unknown model, got %v", err)
 	}
 }
+
+// 错误分类要按"看到之后该做什么"分，尤其得把"上游瞬时拒绝"和"出口被封"
+// 分开——前者重试即可，后者必须换 IP，混在一起排查时判断不了。
+func TestClassifyError(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"", ""},
+		{"upstream returned no content frame (raw 381 bytes)", "upstream_rejected"},
+		{"direct IP slot full: rpm limit reached (configure proxies to scale)", "rate_limited_local"},
+		{"all proxy slots full: rph limit reached", "rate_limited_local"},
+		{"upstream HTTP 302: <HTML><HEAD><meta ...", "blocked_sorry"},
+		{"upstream HTTP 429: too many requests", "upstream_429"},
+		{"upstream HTTP 500: internal", "upstream_http_error"},
+		{"unknown model: gemini-9", "bad_request"},
+		{"image input not supported: ...", "bad_request"},
+		{"dial tcp 1.2.3.4:10000: connectex: connection refused", "network"},
+		{"remote error: tls: handshake failure", "network"},
+	} {
+		if got := classifyError(c.in); got != c.want {
+			t.Errorf("classifyError(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
