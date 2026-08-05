@@ -600,6 +600,68 @@ const pages = {
     `;
   },
 
+  cookies: async () => {
+    const data = await api('/admin/api/cookies');
+    const items = data.items || [];
+    return `
+      <div class="panel page-fill">
+        <h2>Cookie 池
+          <span class="controls">
+            <span class="badge ${data.enabled > 0 ? 'ok' : 'muted'}" style="margin-right:8px">${data.enabled || 0} 启用 / ${data.total || 0} 共</span>
+            <button class="btn" onclick="addCookieAcct()">+ 导入 Cookie</button>
+          </span>
+        </h2>
+        <details class="note">
+          <summary>每行一个 Google 登录态账号</summary>
+          <div class="body">
+            粘贴 gemini.google.com 下的<b>完整 cookie 串</b>（至少含 SID / HSID / SSID /
+            APISID / SAPISID / __Secure-1PSID）。请求时按<b>最久未用优先</b>自动轮转挑一个
+            启用的账号，媒体生成有每账号 10/天 的配额，配越多号总容量越大。<br><br>
+            凭证保存后<b>不再回传浏览器</b>，列表只显示脱敏摘要（cookie 数 / 关键项 /
+            SAPISID 末 4 位 / 失败次数）。缺 <code>__Secure-1PSIDTS</code> 的号无法长期续命，
+            会标黄提示。
+          </div>
+        </details>
+        <div class="table-scroll">
+          <table>
+            <colgroup>
+              <col style="width:48px"><col style="width:160px"><col style="width:80px">
+              <col style="width:150px"><col style="width:92px"><col style="width:64px">
+              <col style="width:150px"><col><col style="width:150px">
+            </colgroup>
+            <thead><tr>
+              <th class="nw">ID</th><th class="nw">标签</th><th class="nw">状态</th>
+              <th class="nw">关键 Cookie</th><th class="nw">SAPISID</th><th class="nw">失败</th>
+              <th class="nw">最近成功</th><th>最近错误</th><th class="nw">操作</th>
+            </tr></thead>
+            <tbody>${items.map(a => `
+              <tr>
+                <td class="num nw">${a.id}</td>
+                <td class="truncate" title="${escapeHtml(a.label || '')}">${a.label ? escapeHtml(a.label) : '<span class="badge muted">未命名</span>'}</td>
+                <td class="nw">${a.status === 'enabled' ? '<span class="badge ok">启用</span>' : '<span class="badge muted">禁用</span>'}</td>
+                <td class="nw" title="共 ${a.cookie_count} 个 cookie，关键项：${(a.key_cookies||[]).join(' / ')}">
+                  <span class="badge ${a.has_1psidts ? 'ok' : 'warn'}">${(a.key_cookies||[]).length}/7 项</span>
+                  ${a.has_1psidts ? '' : '<span class="badge warn" title="缺 __Secure-1PSIDTS，无法长期续命">缺 TS</span>'}
+                </td>
+                <td class="pre nw">${a.sapisid_tail ? '…' + escapeHtml(a.sapisid_tail) : '—'}</td>
+                <td class="num nw">${a.fail_count > 0 ? '<span class="badge fail">' + a.fail_count + '</span>' : 0}</td>
+                <td class="nw" style="font-size:12px;color:var(--muted)">${a.last_ok_at ? fmt.ts(a.last_ok_at) : '—'}</td>
+                <td class="pre truncate" title="${escapeHtml(a.last_error || '')}">${escapeHtml(a.last_error || '—')}</td>
+                <td class="nw">
+                  <span class="actions">
+                    <button class="btn muted" onclick="toggleCookieAcct(${a.id})">${a.status === 'enabled' ? '禁用' : '启用'}</button>
+                    <button class="btn muted" onclick="editCookieAcct(${a.id}, ${JSON.stringify(a.label || '').replace(/"/g, '&quot;')}, ${JSON.stringify(a.note || '').replace(/"/g, '&quot;')})">编辑</button>
+                    <button class="btn danger" onclick="delCookieAcct(${a.id})">删除</button>
+                  </span>
+                </td>
+              </tr>`).join('') || '<tr><td colspan="9" class="empty">Cookie 池是空的。点「+ 导入 Cookie」加一个登录态账号。</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  },
+
   settings: async () => {
     const k = await api('/admin/api/apikey');
     return `
@@ -1074,6 +1136,84 @@ async function resetProxy(id) {
   flash('已重置失败计数');
   await refreshPage();
 }
+// Cookie 池 ────────────────────────────────────────────────────────────────
+
+async function addCookieAcct() {
+  const data = await buildModal({
+    title: '导入 Cookie',
+    desc: '粘贴 gemini.google.com 下的完整 cookie 串（浏览器 F12 → Application → Cookies → 全选复制，或用抓包导出的 "k=v; k=v" 一行）。',
+    bodyHTML: `
+      <div class="field">
+        <label>标签</label>
+        <input data-name="label" type="text" placeholder="例如账号邮箱，可留空" />
+        <div class="hint">仅用于面板里区分账号，不参与请求。</div>
+      </div>
+      <div class="field">
+        <label>Cookie *</label>
+        <textarea data-name="cookie" rows="5" placeholder="SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...; __Secure-1PSIDTS=..."></textarea>
+        <div class="hint">至少要含 SAPISID。缺 __Secure-1PSIDTS 也能用，但无法长期续命。</div>
+      </div>
+      <div class="field">
+        <label>备注</label>
+        <input data-name="note" type="text" placeholder="可留空" />
+      </div>`,
+    submitText: '导入',
+    onSubmit: (overlay) => {
+      const label = (overlay.querySelector('[data-name=label]').value || '').trim();
+      const cookie = (overlay.querySelector('[data-name=cookie]').value || '').trim();
+      const note = (overlay.querySelector('[data-name=note]').value || '').trim();
+      if (!cookie) return { error: 'Cookie 不能为空' };
+      if (!cookie.includes('SAPISID')) return { error: 'cookie 里没有 SAPISID，多半没复制全' };
+      return { label, cookie, note };
+    },
+  });
+  if (!data) return;
+  const r = await fetch('/admin/api/cookies', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const j = await r.json();
+  if (j.error) return flash('导入失败：' + j.error);
+  flash('Cookie 已导入 #' + j.id);
+  await refreshPage();
+}
+
+async function editCookieAcct(id, label, note) {
+  const data = await modalForm({
+    title: '编辑 Cookie #' + id,
+    desc: '只改标签和备注，不动 cookie 本身。要换 cookie 请删掉重新导入。',
+    fields: [
+      { name: 'label', label: '标签', value: label || '', placeholder: '账号邮箱' },
+      { name: 'note', label: '备注', value: note || '', placeholder: '可留空' },
+    ],
+  });
+  if (!data) return;
+  const j = await api('/admin/api/cookies/' + id, {
+    method: 'PATCH', body: JSON.stringify({ label: data.label, note: data.note }),
+  });
+  if (j.error) return flash('保存失败：' + j.error);
+  flash('已保存');
+  await refreshPage();
+}
+
+async function toggleCookieAcct(id) {
+  await api('/admin/api/cookies/' + id + '/toggle', { method: 'POST' });
+  await refreshPage();
+}
+
+async function delCookieAcct(id) {
+  const ok = await modalConfirm({
+    title: '删除 Cookie',
+    desc: `确定删除账号 #${id}？此操作不可撤销，删除后请求不再用它。`,
+    confirmText: '删除', danger: true,
+  });
+  if (!ok) return;
+  await api('/admin/api/cookies/' + id, { method: 'DELETE' });
+  flash('已删除');
+  await refreshPage();
+}
+
 async function doLogout() {
   const ok = await modalConfirm({
     title: '退出登录',
@@ -1375,6 +1515,7 @@ const ICONS = {
   requests: '<path d="M7 5h14v2H7V5zm0 6h14v2H7v-2zm0 6h14v2H7v-2zM3 4.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm0 6a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm0 6a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0z"/>',
   proxies: '<path d="M12 2a2.5 2.5 0 011 4.79V9h4a2 2 0 012 2v1.21a2.5 2.5 0 11-2 0V11h-4v1.21a2.5 2.5 0 11-2 0V11H7v1.21a2.5 2.5 0 11-2 0V11a2 2 0 012-2h4V6.79A2.5 2.5 0 0112 2z"/>',
   settings: '<path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>',
+  cookies: '<path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 4a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm7 3a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM8 13a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm6 4a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"/>',
   menu: '<path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>',
   logout: '<path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4a2 2 0 00-2 2v14a2 2 0 002 2h8v-2H4V5z"/>',
 };
@@ -1382,10 +1523,11 @@ const NAV = [
   ['dashboard', '概览'],
   ['requests', '请求记录'],
   ['proxies', '代理池'],
+  ['cookies', 'Cookie 池'],
   ['settings', '设置'],
 ];
 const PAGE_TITLES = {
-  dashboard: '概览', requests: '请求记录', proxies: '代理池', settings: '设置',
+  dashboard: '概览', requests: '请求记录', proxies: '代理池', cookies: 'Cookie 池', settings: '设置',
 };
 
 function toggleSidebar() {
