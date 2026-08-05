@@ -162,7 +162,11 @@
 
   /* ── 按钮 ───────────────────────────────────────────────────────────── */
   .btn, .controls button, button.btn {
-    all: unset; cursor: pointer; font-family: var(--sans); font-size: 13px;
+    /* all:unset 会把 box-sizing 重置成 content-box（它的优先级高于 * 选择器），
+       于是任何设了 width 的按钮都会多出左右 padding 的宽度而溢出容器。
+       登录页的整宽按钮就是这么撑出卡片的。 */
+    all: unset; box-sizing: border-box;
+    cursor: pointer; font-family: var(--sans); font-size: 13px;
     padding: 8px 18px; border-radius: var(--r-pill); white-space: nowrap;
     background: var(--nav-on); color: var(--nav-on-fg); font-weight: 500;
     transition: background .15s;
@@ -268,7 +272,11 @@
   .pager-btns { display: flex; align-items: center; gap: 6px; }
 
   /* ── 登录 ───────────────────────────────────────────────────────────── */
-  .login-box { max-width: 372px; margin: 16vh auto; background: var(--card);
+  /* align-self 不能省：#app 是 flex 容器，登录态下 .login-box 是唯一子项，
+     默认 align-items:stretch 会把它拉到容器满高（100vh 减上下 margin），
+     卡片底下就空出一大片。这里让它按内容高度，横向仍靠 auto margin 居中。 */
+  .login-box { align-self: flex-start; width: 372px; max-width: 92vw;
+               margin: 16vh auto; background: var(--card);
                border-radius: 28px; padding: 34px 32px;
                box-shadow: 0 1px 3px rgba(60,64,67,.16), 0 8px 28px rgba(60,64,67,.1); }
   .login-box h1 { font-size: 19px; font-weight: 400; margin-bottom: 22px;
