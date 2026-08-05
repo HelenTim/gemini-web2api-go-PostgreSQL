@@ -113,7 +113,7 @@ Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=
 |---|---|
 | `gemini-3.6-flash` | 全方位，默认 |
 | `gemini-3.5-flash-lite` | 极速、轻量 |
-| `gemini-3.1-pro` | 免费账号拿不到，见下 |
+| `gemini-3.1-pro` | 拿不到，会被静默降级，见下 |
 
 只暴露这三个。旧的 `gemini-3.5-flash`、`gemini-3.5-flash-thinking`、
 `gemini-3.5-flash-thinking-lite`、`gemini-auto`、`gemini-flash-lite` **已移除**
@@ -129,8 +129,9 @@ Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=
 
 匿名调用（不挂 cookie）只能拿到上面两个文本模型 + Gemini 自带的联网搜索。
 生图、音乐、视频、深度研究、画布、扩展思考都需要登录，匿名请求会被拒或降级
-成普通文本。`gemini-3.1-pro` 即使挂了免费账号的 cookie 也会被降级到 3.6
-Flash，付费订阅未验证。
+成普通文本。`gemini-3.1-pro` 拿不到：**匿名时被降级成 3.5 Flash-Lite，挂免费账号 cookie
+后降级成「3.6 Flash 扩展」**，付费订阅未验证。管理面板的「实际模型」列会把这类
+降级标出来。
 
 **多轮上下文是靠把 `messages` 拼成单个 prompt 实现的，不是协议级多轮。**
 

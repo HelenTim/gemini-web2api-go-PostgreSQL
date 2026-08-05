@@ -113,7 +113,7 @@ Gemini's backend only recognises three models (list comes from
 |---|---|
 | `gemini-3.6-flash` | All-around, default |
 | `gemini-3.5-flash-lite` | Fastest, lightweight |
-| `gemini-3.1-pro` | Not reachable on free accounts, see below |
+| `gemini-3.1-pro` | Not reachable — silently downgraded, see below |
 
 These three are the only ones exposed. The legacy names `gemini-3.5-flash`,
 `gemini-3.5-flash-thinking`, `gemini-3.5-flash-thinking-lite`, `gemini-auto` and
@@ -132,8 +132,9 @@ no entries for them, and keeping them only suggested five distinct models exist.
 Anonymous calls (no cookie) only reach the two text models above plus Gemini's
 built-in web search. Image generation, music, video, deep research, canvas and
 extended thinking all require a signed-in session; anonymous requests are either
-rejected or silently downgraded to plain text. `gemini-3.1-pro` is downgraded to
-3.6 Flash even with a free account's cookie attached; paid subscriptions untested.
+rejected or silently downgraded to plain text. `gemini-3.1-pro` is never reachable: **anonymously it is downgraded to 3.5
+Flash-Lite, and with a free account's cookie to "3.6 Flash 扩展"**; paid
+subscriptions untested. The admin panel's "actual model" column flags such downgrades.
 
 **Multi-turn context works by flattening `messages` into a single prompt — it is
 not protocol-level multi-turn.**

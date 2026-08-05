@@ -252,7 +252,7 @@ const pages = {
         </h2>
         <table id="reqTable">
           <thead><tr>
-            <th>时间</th><th>模型</th><th>代理</th><th>状态</th>
+            <th>时间</th><th>模型</th><th>实际模型</th><th>代理</th><th>状态</th>
             <th>首字延迟</th><th>总用时</th><th>输入 Token</th><th>输出 Token</th><th>接口</th>
           </tr></thead>
           <tbody><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
@@ -418,6 +418,7 @@ async function loadReqs() {
     <tr>
       <td>${fmt.ts(r.ts)}</td>
       <td>${r.model}</td>
+      <td>${upstreamCell(r)}</td>
       <td>${r.proxy_name || '<span class="badge muted">直连</span>'}</td>
       <td>${r.status === 200 ? '<span class="badge ok">200</span>' : '<span class="badge fail">' + r.status + '</span>'}</td>
       <td>${fmt.ms(r.ttfb_ms)}</td>
@@ -447,6 +448,19 @@ async function loadReqs() {
 
 function escapeHtml(s) {
   return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// 服务端会静默降级（例如请求 3.1 Pro 实际给的是 3.6 Flash），只看请求名发现不了。
+// upstream_model 取自响应帧里服务端自报的显示名；跟请求的对不上时标黄。
+function upstreamCell(r) {
+  const up = r.upstream_model || '';
+  if (!up) return '<span class="badge muted">—</span>';
+  const norm = t => (t || '').toLowerCase().replace(/[\s._-]/g, '').replace(/^gemini/, '');
+  const same = norm(up).startsWith(norm(r.model).slice(0, 6));
+  return same
+    ? escapeHtml(up)
+    : '<span class="badge" style="background:#78350f;color:#fcd34d" title="服务端实际使用的模型与请求的不一致">'
+      + escapeHtml(up) + '</span>';
 }
 
 async function addProxy() {

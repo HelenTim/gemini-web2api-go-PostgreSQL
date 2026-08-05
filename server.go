@@ -141,6 +141,7 @@ func recordRequest(endpoint, model, prompt, response string, res *StreamResult, 
 		r.Stream = 1
 	}
 	if res != nil {
+		r.UpstreamModel = res.UpstreamModel
 		r.TotalMs = res.TotalMs
 		r.TTFBMs = &res.TTFBMs
 		if res.ProxyID > 0 {

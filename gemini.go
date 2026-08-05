@@ -40,7 +40,7 @@ type ModelConfig struct {
 var Models = map[string]ModelConfig{
 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
-	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Free accounts are downgraded to 3.6 Flash even when signed in"},
+	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Not reachable: downgraded to Flash-Lite anonymously, to 3.6 Flash even when signed in"},
 }
 
 // resolveModel maps a model name to its config.
@@ -63,12 +63,16 @@ func resolveModel(modelName string) (string, ModelConfig, error) {
 // StreamResult holds raw body + per-request proxy + timing info.
 type StreamResult struct {
 	// Emitted 是流式模式下已经通过 onDelta 发出去的文本；非流式为空。
-	Emitted   string
-	Raw       string
-	ProxyID   int64
-	ProxyName string
-	TTFBMs    int64
-	TotalMs   int64
+	Emitted string
+	Raw     string
+	// UpstreamModel 是服务端在响应帧 [42] 里自报的模型显示名。
+	// 跟请求的模型未必一致：gemini-3.1-pro 匿名时被降级成 3.5 Flash-Lite、
+	// 登录时降级成 3.6 Flash 扩展，只看请求名根本发现不了。
+	UpstreamModel string
+	ProxyID       int64
+	ProxyName     string
+	TTFBMs        int64
+	TotalMs       int64
 }
 
 // RateLimitError 表示所有 IP slot 都达到了限流上限。
@@ -215,8 +219,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 	}
 
 	for attempt := 0; attempt < cfg.RetryAttempts; attempt++ {
-		sendT := time.Now()
-		statusCode, raw, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
+		statusCode, raw, ttfb, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
 		if err != nil {
 			lastErr = err
 			if pickedOK {
@@ -232,7 +235,6 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			}
 			continue
 		}
-		ttfb := time.Since(sendT).Milliseconds()
 		if statusCode != 200 {
 			lastErr = fmt.Errorf("upstream HTTP %d: %s", statusCode, truncate(string(raw), 200))
 			if pickedOK {
@@ -250,15 +252,29 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			recordProxyResult(picked.ID, true, "")
 		}
 		return &StreamResult{
-			Emitted:   tracker.emitted,
-			Raw:       string(raw),
-			ProxyID:   picked.ID,
-			ProxyName: picked.Name,
-			TTFBMs:    ttfb,
-			TotalMs:   time.Since(t0).Milliseconds(),
+			Emitted:       tracker.emitted,
+			Raw:           string(raw),
+			UpstreamModel: extractUpstreamModel(string(raw)),
+			ProxyID:       picked.ID,
+			ProxyName:     picked.Name,
+			TTFBMs:        ttfb,
+			TotalMs:       time.Since(t0).Milliseconds(),
 		}, nil
 	}
 	return nil, lastErr
+}
+
+// upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
+// 形如 ...,"fbb127bbb056c959",null,null,"3.6 Flash",true,...
+var upstreamModelRe = regexp.MustCompile(`\\"[0-9a-f]{16}\\",null,null,\\"([^"\\]{1,40})\\"`)
+
+// extractUpstreamModel 取服务端实际使用的模型名，取不到返回空串。
+func extractUpstreamModel(raw string) string {
+	m := upstreamModelRe.FindAllStringSubmatch(raw, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return m[len(m)-1][1]
 }
 
 // buildGeminiHeaders 准备 StreamGenerate 必需的应用层 header。
@@ -288,12 +304,13 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 // doGeminiRequest 发一次请求到 endpoint。proxyURL 非空走 stdlib（支持 socks5/http），
 // 空走 tls-client（chrome146 真指纹）。返回 (HTTP status, body bytes, err)。
 func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
-	onLine func(string)) (int, []byte, error) {
+	onLine func(string)) (int, []byte, int64, error) {
+	sendAt := time.Now()
 	if proxyURL != "" {
 		// 走 stdlib —— 跟 Kiro-Gogogo 同款 http.ProxyURL 实现，已知能过 socks5/socks5h。
 		req, err := http.NewRequest("POST", endpoint, strings.NewReader(body))
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, 0, err
 		}
 		applyChromeHeaders(req)
 		for k, v := range headers {
@@ -302,20 +319,20 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 		client := getStdlibClient(proxyURL)
 		resp, err := client.Do(req)
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, 0, err
 		}
 		defer resp.Body.Close()
-		raw, err := readBody(resp.Body, onLine)
+		raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
 		if err != nil {
-			return resp.StatusCode, nil, err
+			return resp.StatusCode, nil, ttfb, err
 		}
-		return resp.StatusCode, raw, nil
+		return resp.StatusCode, raw, ttfb, nil
 	}
 
 	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
 	req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, 0, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -323,33 +340,46 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 	client := getTLSClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, 0, err
 	}
 	defer resp.Body.Close()
-	raw, err := readBody(resp.Body, onLine)
+	raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
 	if err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, nil, ttfb, err
 	}
-	return resp.StatusCode, raw, nil
+	return resp.StatusCode, raw, ttfb, nil
 }
 
 // readBody 读完整个响应体并原样返回；onLine 非 nil 时每读到一行就回调一次，
 // 让上层能在上游还没写完时就往客户端转发。
-func readBody(r io.Reader, onLine func(string)) ([]byte, error) {
-	if onLine == nil {
-		return io.ReadAll(r)
-	}
+//
+// 始终走逐行扫描（而不是 onLine==nil 时图省事用 io.ReadAll），因为要拿到
+// **第一行到达的时刻**当 TTFB。用 ReadAll 的话读完才返回，测出来的"首字节
+// 耗时"实际是完整耗时，跟总耗时永远一样。
+//
+// start 必须是**请求发出前**的时刻，由调用方传入。放在本函数里取 time.Now()
+// 是不对的：那时 client.Do 已经返回、响应头甚至部分 body 都到了，测出来恒为 0。
+func readBody(r io.Reader, onLine func(string), start time.Time) ([]byte, int64, error) {
 	var buf bytes.Buffer
 	sc := bufio.NewScanner(io.TeeReader(r, &buf))
 	// 单帧可能很大（实测见过 40 万字节的响应），默认 64KB 上限不够。
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	var ttfb int64 = -1
 	for sc.Scan() {
-		onLine(sc.Text())
+		if ttfb < 0 {
+			ttfb = time.Since(start).Milliseconds()
+		}
+		if onLine != nil {
+			onLine(sc.Text())
+		}
+	}
+	if ttfb < 0 {
+		ttfb = time.Since(start).Milliseconds()
 	}
 	if err := sc.Err(); err != nil {
-		return buf.Bytes(), err
+		return buf.Bytes(), ttfb, err
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), ttfb, nil
 }
 
 // textsInLine 从单个 wrb.fr 行里取出候选回复文本。

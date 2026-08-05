@@ -58,9 +58,9 @@ const rejectedRaw = ")]}'\n\n122\n" +
 	"\n56\n" + `[["di",192],["af.httprm",191,"8196459853603899163",2]]` +
 	"\n25\n" + `[["e",4,null,null,216]]` + "\n"
 
-// 正常响应：有内容帧，且结束帧同样带 1096。
+// 正常响应：有内容帧，[39] 是模型 hex id、[42] 是显示名，结束帧同样带 1096。
 const okRaw = ")]}'\n\n900\n" +
-	`[["wrb.fr",null,"[null,[\"c_x\",\"r_y\"],null,null,[[\"rc_z\",[\"banana\"],null,null,null,null,null,null,[2],\"en\"]],null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,\"3.6 Flash\"]"]]` +
+	`[["wrb.fr",null,"[null,[\"c_x\",\"r_y\"],null,null,[[\"rc_z\",[\"banana\"],null,null,null,null,null,null,[2],\"en\"]],null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,\"fbb127bbb056c959\",null,null,\"3.6 Flash\",true]"]]` +
 	"\n122\n" +
 	`[["wrb.fr",null,null,null,null,[13,null,[["type.googleapis.com/assistant.boq.bard.application.BardErrorInfo",[1096]]]]]]` + "\n"
 
@@ -204,5 +204,22 @@ func TestDeltaTrackerAccumulates(t *testing.T) {
 	// 前缀对不上时不补发，避免重复
 	if r := remainingText("另一段内容", &StreamResult{Emitted: d.emitted}); r != "" {
 		t.Errorf("前缀对不上时不该补发, got %q", r)
+	}
+}
+
+// 服务端会静默降级（例如请求 3.1 Pro 实际给 3.6 Flash），只看请求名发现不了，
+// 所以要从响应帧里把它自报的模型名取出来单独记录。
+func TestExtractUpstreamModel(t *testing.T) {
+	if got := extractUpstreamModel(okRaw); got != "3.6 Flash" {
+		t.Errorf("正常响应应取到 '3.6 Flash', got %q", got)
+	}
+	// 抓包里 Pro 请求被降级的真实片段
+	downgraded := `[["wrb.fr",null,"[null,[\"c_x\",\"r_y\"],null,null,[[\"rc_z\",[\"hi\"]]],null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,\"fbb127bbb056c959\",null,null,\"3.6 Flash 扩展\",true]"]]`
+	if got := extractUpstreamModel(downgraded); got != "3.6 Flash 扩展" {
+		t.Errorf("应取到 '3.6 Flash 扩展', got %q", got)
+	}
+	// 被拒的响应没有模型名，不能瞎猜
+	if got := extractUpstreamModel(rejectedRaw); got != "" {
+		t.Errorf("被拒响应应返回空, got %q", got)
 	}
 }

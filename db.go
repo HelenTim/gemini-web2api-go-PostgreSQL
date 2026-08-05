@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS requests (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     ts              INTEGER NOT NULL,
     model           TEXT NOT NULL,
+    upstream_model  TEXT,
     proxy_id        INTEGER,
     proxy_name      TEXT,
     status          INTEGER NOT NULL,
@@ -122,6 +123,8 @@ func getDB() *sql.DB {
 		// Migration: drop legacy prompt_preview / response_preview columns
 		// from older deployments. SQLite 3.35+ supports DROP COLUMN.
 		// Errors are ignored — columns may already be absent.
+		// 老库补上服务端自报的模型名列（列已存在时报错，忽略）
+		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN upstream_model TEXT`)
 		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN prompt_preview`)
 		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN response_preview`)
 		db = conn
@@ -136,6 +139,7 @@ type RequestRow struct {
 	ID            int64  `json:"id"`
 	TS            int64  `json:"ts"`
 	Model         string `json:"model"`
+	UpstreamModel string `json:"upstream_model"`
 	ProxyID       *int64 `json:"proxy_id"`
 	ProxyName     string `json:"proxy_name"`
 	Status        int    `json:"status"`
@@ -152,11 +156,11 @@ type RequestRow struct {
 
 func insertRequest(r *RequestRow) {
 	_, err := getDB().Exec(`INSERT INTO requests
-        (ts, model, proxy_id, proxy_name, status, error, ttfb_ms, total_ms,
+        (ts, model, upstream_model, proxy_id, proxy_name, status, error, ttfb_ms, total_ms,
          prompt_chars, response_chars, prompt_tokens, output_tokens,
          endpoint, stream)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		r.TS, r.Model, r.ProxyID, r.ProxyName, r.Status, r.Error, r.TTFBMs, r.TotalMs,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.TS, r.Model, r.UpstreamModel, r.ProxyID, r.ProxyName, r.Status, r.Error, r.TTFBMs, r.TotalMs,
 		r.PromptChars, r.ResponseChars, r.PromptTokens, r.OutputTokens,
 		r.Endpoint, r.Stream)
 	if err != nil {
