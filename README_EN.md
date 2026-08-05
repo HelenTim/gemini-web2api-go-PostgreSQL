@@ -134,7 +134,7 @@ There is also an unauthenticated health check at `GET /` returning `{"status":"o
 - **Overview** — 24h KPIs, request volume / P50 latency dual-axis chart, per-model and per-proxy breakdowns, IP rate-limit usage, one-click connectivity check
 - **Requests** — request log (metadata only, no prompt/response content), status/model filters, pagination
 - **Proxy pool** — runtime CRUD, enable/disable, circuit breaker on repeated failures (each proxy is its own IP slot)
-- **Cookie pool** — import multiple signed-in Google accounts; the list only shows redacted summaries. **This is storage and management only — the request path does not rotate through the pool yet**, requests still use the single cookie from the Settings page
+- **Cookie pool** — import multiple signed-in Google accounts; requests rotate through them **least-recently-used first**, falling back to the Settings-page cookie only when the pool is empty. The list shows redacted summaries only (cookie count / key entries / last 4 of SAPISID / failure count)
 - **Settings** — runtime config form (saved settings take effect immediately), API key rotation, cookie paste box, read-only view of deploy-time config
 
 The frontend is a single HTML file and Chart.js is embedded in the binary, **not loaded from a CDN**, so the panel also works on air-gapped or intranet deployments.
@@ -241,7 +241,9 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 
 The JSON form `{"cookie": "SID=...; ...", "sapisid": "..."}` is also accepted. Requests carrying `SAPISID` get a computed `SAPISIDHASH` authorization header, so that entry cannot be missing.
 
-The Cookie pool page can hold several accounts, but **requests do not rotate through the pool yet** — only the cookie on the Settings page actually takes part in requests.
+**For multiple accounts use the Cookie pool page.** Each request picks an enabled account least-recently-used first and advances the rotation; the single cookie above is used only when the pool is empty. Either path makes `gemini-3.1-pro` appear in the model list (you still don't get real Pro, see above).
+
+An account's "failure count" and "last success" columns **are not updated automatically** yet — request outcomes are not written back to the pool, so those two only change when you edit the account manually.
 
 ## Proxy pool (the core of running this for free)
 
@@ -343,7 +345,7 @@ docker-compose.yml   single container, sqlite volume, exposed locally on 8083
 - **Function calling**: prompt-level, the model doesn't always answer in the expected format (a real protocol layer isn't available to us)
 - **Multimodal**: unsupported. The web protocol does support image/file upload, image, music and video generation, but all require a signed-in session and none is implemented here
 - **Token counts**: tiktoken estimates (Gemini's real tokenizer is not public), within about ±20% of the true value
-- **Cookie pool not wired into requests**: the panel can import several accounts, but requests use only the Settings-page cookie
+- **Cookie pool rotates but doesn't health-check**: account selection is pure rotation, request outcomes aren't written back, so a broken account is never auto-disabled — you have to disable it in the panel
 - **Streaming is only half real**: `/v1/responses` and chat requests carrying `tools` are buffered; only plain chat streams incrementally
 
 ## Troubleshooting
