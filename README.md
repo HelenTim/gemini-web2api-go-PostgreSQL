@@ -64,10 +64,17 @@ gemini-web2api-go v3.0.0
   Base URL:    http://localhost:8083/v1
   API key:     sk-gemini-XX...XXXX  (mutable in admin UI)
   Admin UI:    http://localhost:8083/admin  (token auth)
+  DB:          ./data/gemini.db
+  Models:      [gemini-3.5-flash-lite gemini-3.6-flash]
+  Cookie:      none (anonymous)
+  Proxy:       none
   Impersonate: chrome_146
   Tokenizer:   tiktoken cl100k_base
   Per-IP 限流: 并发=5 / RPM=30 / RPH=80
+  Retry:       3x / 2s
 ```
+
+首次启动会自动生成 API key（banner 里是打码的，完整值在管理面板「设置」页）。
 
 ### 调用
 
@@ -96,14 +103,46 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+Windows PowerShell 下 `curl` 是 `Invoke-WebRequest` 的别名，会把 JSON 引号重新解释，要用
+`curl.exe` 加 `--%`：
+
+```powershell
+curl.exe --% http://127.0.0.1:8083/v1/chat/completions -H "Content-Type: application/json" -H "Authorization: Bearer sk-gemini-..." -d "{\"model\":\"gemini-3.6-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello!\"}]}"
+```
+
+## 客户端接入
+
+任何 OpenAI 兼容客户端（Cherry Studio / ChatBox / Open WebUI / dify / Cursor / …）都是同一套填法：
+
+| 字段 | 值 |
+|---|---|
+| Base URL / API 地址 | `http://localhost:8083/v1`（部分客户端只要 `http://localhost:8083`，会自己拼 `/v1`） |
+| API Key | 管理面板「设置」页里的那个 `sk-gemini-…` |
+| 模型 | `gemini-3.6-flash` |
+
+**newapi / one-api 建渠道**：类型选 OpenAI，Base URL 填 `http://localhost:8083`（跟 newapi 同在
+docker 里就写 `http://host.docker.internal:8083` 或容器名），密钥填 API key，模型填
+`gemini-3.6-flash,gemini-3.5-flash-lite`。
+
+**Codex CLI** 走 `/v1/responses`，把 base url 指到 `http://localhost:8083/v1` 即可（该端点已实现，
+但不是增量流式，见下面的协议覆盖表）。
+
+**Gemini CLI 接不了**：它要的是 Google 原生的 `/v1beta/models/{model}:generateContent`，本项目只暴露
+OpenAI 形状的接口，没做 `/v1beta`。
+
+另有一个不鉴权的健康检查 `GET /`，返回 `{"status":"ok","version":…,"models":[…]}`，给探活用。
+
 ## 管理面板
 
 `http://localhost:8083/admin`，用 `--admin-token` 登录。
 
-- **仪表盘** — 24h KPI + 请求量/P50 延迟双轴趋势图 + 模型/代理分组统计 + IP 限流用量 + 一键连通性诊断
+- **概览** — 24h KPI + 请求量/P50 延迟双轴趋势图 + 模型/代理分组统计 + IP 限流用量 + 一键连通性诊断
 - **请求记录** — 明细列表（仅元数据，无 prompt/response 内容），状态/模型筛选 + 分页
 - **代理池** — 运行时增删改 + 启用/禁用 + 失败次数熔断（每代理是独立 IP slot）
-- **设置** — 运行时配置表单（保存即生效）+ API Key 轮换 + 部署期配置只读展示
+- **Cookie 池** — 导入多个 Google 登录态账号，列表只显示脱敏摘要。**目前只是存储和管理，请求路径还没接上轮转**——实际发请求用的仍是「设置」页里那一个 cookie
+- **设置** — 运行时配置表单（保存即生效）+ API Key 轮换 + Cookie 粘贴 + 部署期配置只读展示
+
+面板前端是单个 HTML，Chart.js 随二进制 embed，**不走 CDN**——内网/离线部署也能开。
 
 ## 模型
 
@@ -197,6 +236,25 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 命令行参数仍然可用，定位是本地调试时的临时覆盖。优先级：
 **面板改动 > CLI flag / `config.json` > 内置默认**。
 
+不用 Docker 直接跑二进制时，可以把 `config.example.json` 复制成 `config.json` 当启动模板
+（不传 `--config` 时会自动找当前目录的 `config.json`，其次
+`$HOME/.config/gemini-web2api/config.json`）。里面的调优项面板改了就以面板为准，
+`config.json` 只决定第一次启动的初值。
+
+命令行参数全集：
+
+| flag | 说明 |
+|---|---|
+| `--port` | 监听端口，默认 8083 |
+| `--config` | 指定 `config.json` 路径 |
+| `--db` | SQLite 路径，默认 `./data/gemini.db` |
+| `--admin-token` | 面板登录 token，留空 = 面板不鉴权（只有绑 127.0.0.1 才可接受） |
+| `--api-key` | 锁定 `/v1/*` 的 key（面板改不了），等价于 `API_KEY` 环境变量 |
+| `--cookie-file` | 面板没存 cookie 时的兜底文件 |
+| `--proxy` | 代理池为空时的静态代理 |
+| `--impersonate` | TLS 指纹档位 |
+| `--version` | 打印版本退出（Docker healthcheck 用的就是它） |
+
 ## Cookie（可选）
 
 挂 Google 账号 cookie 后请求会走登录态。**但 `gemini-3.1-pro` 拿不到**——实测
@@ -209,11 +267,17 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 1. 浏览器登录 [gemini.google.com](https://gemini.google.com)
 2. DevTools (F12) → Application → Cookies → `https://gemini.google.com`
 3. 复制：`SID` / `HSID` / `SSID` / `APISID` / `SAPISID` / `__Secure-1PSID`
-4. `cookie.txt`：
+4. 粘进面板「设置 → Google Cookie」，保存即生效；或写成 `cookie.txt` 后启动加
+   `--cookie-file cookie.txt`（面板里存了就以面板为准）：
 ```
 SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 ```
-5. 启动加 `--cookie-file cookie.txt`
+
+JSON 形式 `{"cookie": "SID=...; ...", "sapisid": "..."}` 也吃。带 `SAPISID` 的请求会自动
+算 `SAPISIDHASH` 授权头，所以这一项不能少。
+
+「Cookie 池」页可以存多个账号，但**请求还没按池轮转**，目前只有「设置」页那一个 cookie 会
+真正参与请求。
 
 ## 代理池（白嫖路线核心）
 
@@ -250,6 +314,10 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 - 失败 5 次自动熔断（管理面板可手动重置）
 - 全部代理满 → 返回 HTTP 429（不消耗 Google 配额，等空位再重试）
 
+**不读 `HTTPS_PROXY` / `ALL_PROXY` 环境变量。** 代理只从代理池或「设置」页的静态代理
+（`--proxy` / `config.json` 同义）里取——否则宿主机上一个随手 export 的变量会悄悄改变
+出口 IP，而面板显示的还是直连，排查时会误判。
+
 ## 指纹模拟
 
 直连场景（无代理）走 [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client)，TLS 握手 + HTTP/2 SETTINGS 帧 + ALPS 全部对齐真实 Chrome 146。Google 风控视角下，跟真浏览器无法区分。
@@ -271,7 +339,10 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 |---|---|---|
 | `POST /v1/chat/completions` | ✅ | 真流式：上游每出一帧就转发增量（实测 400 字中文回答产生 40 个 chunk）。chunk 序列为 `delta{role}` → `delta{content}`×N → 空 `delta`+`finish_reason` → `[DONE]`。**带 `tools` 时退化为收完再发**——tool_call 块要完整文本才能解析 |
 | `POST /v1/responses` | ✅ | OpenAI Responses API（Codex CLI 用）。**未做真流式**，仍是收完再按事件序列发 |
-| `GET /v1/models` | ✅ | 3 个模型 |
+| `GET /v1/models` | ✅ | 匿名 2 个，挂了 cookie 才出第 3 个 |
+| `GET /` | ✅ | 健康检查，不鉴权，返回 status/version/models |
+| `/v1beta/models/…`（Gemini CLI 原生格式） | ❌ | 未实现，只暴露 OpenAI 形状的接口 |
+| `/v1/embeddings`、`/v1/images/*`、`/v1/audio/*` | ❌ | 未实现，返回 404 |
 | Function calling | ⚠️ | Prompt 级实现（让模型输出 ` ```tool_call``` ` 块再 regex 解析），不是真协议层。**查私有数据/内部系统类可靠**，但 Gemini 自己能做的（如查天气）会被它直接回答，有副作用的动作（如发邮件）会被拒绝 |
 | `tool_choice` | ⚠️ | `none` 完全不注入工具定义；`required` 和指定函数会加强制措辞、并把其余工具从 prompt 裁掉。但 prompt 级实现**无法真正强制**——实测模型自己答得上来的问题（天气、2+2）即使 `required` 也照样直接作答 |
 | `stream_options.include_usage` | ✅ | 在 `finish_reason` 之后补一个 `choices` 为空的 usage chunk |
@@ -295,12 +366,15 @@ sse.go               chat.completion.chunk 的 SSE 写出器（懒发 header）
 ratelimit.go         每 IP slot 独立并发/RPM/RPH 限流器
 tokenizer.go         tiktoken cl100k_base 单例
 apikey.go            API key 管理（locked / runtime-mutable 双轨）
-db.go                SQLite schema + sessions + requests + kv
+db.go                SQLite schema + sessions + requests + accounts + kv
 proxy.go             代理池 CRUD + 容量调度 + 熔断
+cookie_pool.go       Cookie 池数据层（accounts 表 CRUD + 最久未用优先挑选）
 scheduler.go         小时/天聚合 + 数据保留
 admin.go             /admin/api/* 鉴权 + REST 接口
+admin_cookies.go     Cookie 池的 admin REST 接口（返回前脱敏）
 admin_ui.go          embed admin_ui/ 静态文件
-admin_ui/index.html  单页中文 admin（Chart.js CDN）
+admin_ui/index.html  单页中文 admin
+admin_ui/chart.umd.min.js  Chart.js 随二进制 embed，不走 CDN
 Dockerfile           multi-stage (alpine builder → distroless runtime)
 docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
 ```
@@ -312,6 +386,22 @@ docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
 - **Function calling**：prompt 级实现，模型不一定每次都按格式返回（OpenAI 真协议层我们做不到）
 - **多模态**：暂不支持。网页协议支持图片/文件上传、生图、音乐、视频，但都要登录态，本项目尚未实现
 - **token 数**：用 tiktoken 估算（Gemini 真 tokenizer 未公开），跟真值偏差 ±20% 以内
+- **Cookie 池未接入请求**：面板能导入多个账号，但发请求只用「设置」页那一个 cookie
+- **假流式的那一半**：`/v1/responses` 和带 `tools` 的 chat 请求都是收完再发，只有普通 chat 流式是真增量
+
+## 故障排查
+
+| 现象 | 多半是什么 | 怎么办 |
+|---|---|---|
+| 我们返回 **429** | 所有 IP slot 的并发/RPM/RPH 都占满了，**不是 Google 拒绝**，没消耗上游配额 | 加代理，或在「设置」页调高限额 |
+| 面板诊断显示 **302 → `google.com/sorry/index`** | 这个出口 IP 被 Google 拦了（约 85 次请求后） | 换出口/加代理。拦截是概率性的，隔一段会恢复，别原地重试硬刚 |
+| 偶发空响应、面板记为上游拒绝 | 上游瞬时拒绝（`1155`），没有可预测阈值，跟频率/并发/累积次数都无关 | 重发一次通常就好。**降 RPM 解决不了**，实测跟频率无关 |
+| 请求全部超时 | 本机到 `gemini.google.com` 不通 | 配代理（面板「代理池」或 `--proxy`）。注意**不读 `HTTPS_PROXY` 环境变量** |
+| 选 `gemini-3.1-pro` 直接报错 | 没配 cookie 时它不暴露，这是故意的 | 见上文模型章节：配了 cookie 也拿不到真 Pro |
+| 面板打不开 / 401 | `--admin-token`（或 `ADMIN_TOKEN`）没对上 | token 留空则不鉴权，只有绑 127.0.0.1 时才可接受 |
+
+Docker 用默认 bridge 网络时上游可能返回空内容（Google 拒绝某些 NAT 段）——这是 Python 参考实现
+README 报告的现象，本项目**没有复现过**。真遇到可以试 `network_mode: host` 验证是不是这个原因。
 
 ## 致谢
 
