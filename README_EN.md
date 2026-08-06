@@ -43,6 +43,19 @@ There is a community single-file Python implementation (same name, `gemini-web2a
 
 ## Quick start
 
+### Prebuilt binary (simplest)
+
+Grab the one for your platform from
+[Releases](https://github.com/zexadev/gemini-web2api-go/releases). No Go, no Docker —
+the single file is the whole thing:
+
+```bash
+chmod +x gemini-web2api-go_*
+./gemini-web2api-go_* --port 8083 --admin-token your-admin-token
+```
+
+Data lands in `./data/gemini.db` by default; pass `--db /your/path.db` to move it.
+
 ### Docker (no source needed)
 
 ```bash

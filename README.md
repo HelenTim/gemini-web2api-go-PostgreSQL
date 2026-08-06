@@ -43,6 +43,18 @@
 
 ## 快速开始
 
+### 下载二进制（最省事）
+
+[Releases](https://github.com/zexadev/gemini-web2api-go/releases) 里挑对应平台的下载，
+不用 Go、不用 Docker，单个文件就是全部：
+
+```bash
+chmod +x gemini-web2api-go_*
+./gemini-web2api-go_* --port 8083 --admin-token your-admin-token
+```
+
+数据默认落在 `./data/gemini.db`，换位置加 `--db /your/path.db`。
+
 ### Docker（不用源码）
 
 ```bash
