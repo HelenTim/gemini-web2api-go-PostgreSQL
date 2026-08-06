@@ -418,3 +418,7 @@ MIT — see [LICENSE](LICENSE)
 ## Links
 
 - [Sophomoresty/gemini-web2api](https://github.com/Sophomoresty/gemini-web2api) — a Python implementation of the same idea; its approach informed our early work on the Gemini web protocol
+- [LINUX DO](https://linux.do) — the community where this project is shared
+
+[![LinuxDo](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LinuxDo-blue?style=for-the-badge)](https://linux.do/)
+

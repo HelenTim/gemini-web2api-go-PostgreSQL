@@ -473,3 +473,7 @@ MIT — 详见 [LICENSE](LICENSE)
 ## 友情链接
 
 - [Sophomoresty/gemini-web2api](https://github.com/Sophomoresty/gemini-web2api) —— 同类的 Python 实现，早期摸 Gemini 网页协议时借鉴过它的思路
+- [LINUX DO](https://linux.do) —— 本项目在该社区分享
+
+[![LinuxDo](https://img.shields.io/badge/%E7%A4%BE%E5%8C%BA-LinuxDo-blue?style=for-the-badge)](https://linux.do/)
+
