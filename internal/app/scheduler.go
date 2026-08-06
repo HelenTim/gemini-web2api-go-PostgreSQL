@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"sort"
@@ -6,10 +6,10 @@ import (
 )
 
 // startScheduler kicks off background loops:
-//   1. hourly aggregation: rolls up requests in the previous closed hour bucket
-//   2. daily aggregation: rolls up the previous closed day bucket
-//   3. retention: deletes raw requests older than rtCfg().RetentionDays
-//   4. proxy cache reload: every 60s pull proxies from DB
+//  1. hourly aggregation: rolls up requests in the previous closed hour bucket
+//  2. daily aggregation: rolls up the previous closed day bucket
+//  3. retention: deletes raw requests older than rtCfg().RetentionDays
+//  4. proxy cache reload: every 60s pull proxies from DB
 func startScheduler() {
 	go func() {
 		// On boot: catch up any aggregations missed while service was down.
