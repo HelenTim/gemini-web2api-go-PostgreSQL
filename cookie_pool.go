@@ -149,8 +149,9 @@ func markCookieByStatus(id int64, statusCode int, errStr string) {
 //
 // 注意 last_ok_at 的语义是"这个 cookie 参与的请求成功过"，**不等于"cookie 仍然
 // 有效"**：cookie 过期后 Gemini 不报错，只是把你当匿名用户，纯文本请求照样 200。
-// 要真正验有效性得发一个只有登录态才能用的请求（比如 inner[80]=2 扩展思考，匿名
-// 会静默降级成普通 3.6 Flash 且不返回思考链），那需要先支持登录态功能位。
+// 要真正验有效性，最省事的判据是请求 gemini-3.1-pro：cookie 有效时服务端回报
+// "3.1 Pro" 并带思考链，失效时静默降级成 3.5 Flash-Lite。（xsrf.go 取 token 时
+// 若页面里没有 SNlM0e，也会当场判定 cookie 失效。）
 func markAccountResult(id int64, ok bool, errStr string) {
 	if id <= 0 {
 		return

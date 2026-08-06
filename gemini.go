@@ -40,7 +40,7 @@ type ModelConfig struct {
 var Models = map[string]ModelConfig{
 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
-	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Not reachable: downgraded to Flash-Lite anonymously, to 3.6 Flash even when signed in"},
+	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Most capable; needs a signed-in cookie (downgraded to Flash-Lite without one)"},
 }
 
 // hasCookie 表示是否配置了 Google 账号 cookie。
@@ -57,8 +57,11 @@ func hasCookie() bool {
 //
 // 没配 cookie 时排除 3.1 Pro：实测匿名请求它会被静默降级成 3.5 Flash-Lite，
 // 客户端还以为自己用上了 Pro。与其让它"成功"，不如直接不提供、让选型时就报错。
-// 配了 cookie 也不保证能用——免费账号照样被降级成「3.6 Flash 扩展」，只有付费
-// 订阅可能真的路由到 Pro（未验证），所以有 cookie 时只是把选择权交回给部署者。
+//
+// 配了有效 cookie 时它是真能用的：连打 6 次服务端回报的都是 "3.1 Pro" 本身，
+// 且每次都带思考链（118-152 字符，普通 3.6 Flash 为 0）。早前记录的「免费号
+// 登录也只能拿到 3.6 Flash 扩展」是在缺 XSRF token 的条件下测的，那时候带
+// cookie 的请求根本发不出去（见 xsrf.go）。
 func availableModels() map[string]ModelConfig {
 	if hasCookie() {
 		return Models
@@ -103,8 +106,8 @@ type StreamResult struct {
 	Emitted string
 	Raw     string
 	// UpstreamModel 是服务端在响应帧 [42] 里自报的模型显示名。
-	// 跟请求的模型未必一致：gemini-3.1-pro 匿名时被降级成 3.5 Flash-Lite、
-	// 登录时降级成 3.6 Flash 扩展，只看请求名根本发现不了。
+	// 跟请求的模型未必一致：gemini-3.1-pro 匿名时被静默降级成 3.5 Flash-Lite，
+	// 只看请求名根本发现不了，所以这个字段要一直记着。
 	UpstreamModel string
 	ProxyID       int64
 	ProxyName     string

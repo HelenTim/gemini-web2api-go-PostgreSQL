@@ -210,13 +210,13 @@ func TestDeltaTrackerAccumulates(t *testing.T) {
 	}
 }
 
-// 服务端会静默降级（例如请求 3.1 Pro 实际给 3.6 Flash），只看请求名发现不了，
-// 所以要从响应帧里把它自报的模型名取出来单独记录。
+// 服务端会静默降级（匿名请求 3.1 Pro 实际给 3.5 Flash-Lite），只看请求名发现
+// 不了，所以要从响应帧里把它自报的模型名取出来单独记录。
 func TestExtractUpstreamModel(t *testing.T) {
 	if got := extractUpstreamModel(okRaw); got != "3.6 Flash" {
 		t.Errorf("正常响应应取到 '3.6 Flash', got %q", got)
 	}
-	// 抓包里 Pro 请求被降级的真实片段
+	// 带"扩展"后缀的模型名也要能取全，不能在空格处截断
 	downgraded := `[["wrb.fr",null,"[null,[\"c_x\",\"r_y\"],null,null,[[\"rc_z\",[\"hi\"]]],null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,\"fbb127bbb056c959\",null,null,\"3.6 Flash 扩展\",true]"]]`
 	if got := extractUpstreamModel(downgraded); got != "3.6 Flash 扩展" {
 		t.Errorf("应取到 '3.6 Flash 扩展', got %q", got)
@@ -229,6 +229,7 @@ func TestExtractUpstreamModel(t *testing.T) {
 
 // 没配 cookie 时 3.1 Pro 必然被静默降级成 Flash-Lite，不如干脆不暴露：
 // 让客户端在选型时就拿到明确错误，而不是拿到一个"成功但其实不是 Pro"的回复。
+// （配了有效 cookie 时它是真能用的，见 availableModels 注释。）
 func TestProHiddenWithoutCookie(t *testing.T) {
 	cookieRuntime.Store("")
 	if _, ok := availableModels()["gemini-3.1-pro"]; ok {
