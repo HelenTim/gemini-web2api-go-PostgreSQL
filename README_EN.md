@@ -41,7 +41,7 @@ This is not a wrapper around Google's official API ([generativelanguage.googleap
 - Every response records which model the backend **actually** used, so silent
   downgrades are visible
 
-**Staying unblocked**
+**Staying unblocked, and scaling past one IP**
 - Real Chrome 146 TLS fingerprint via utls, not a default SDK handshake
 - Per-exit-IP limits: concurrency / RPM / RPH
 - Proxy pool: runtime CRUD, failure circuit breaker, rotation — each proxy is its
