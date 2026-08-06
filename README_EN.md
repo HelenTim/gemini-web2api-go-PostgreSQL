@@ -25,22 +25,6 @@ It turns a call like this:
 
 This is not a wrapper around Google's official API ([generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)) — it proxies **the browser protocol directly**, so **no Google API key and no paid quota are required**.
 
-## How it differs from the reference implementation
-
-There is a community single-file Python implementation (same name, `gemini-web2api`, stdlib only). This project copies its protocol layer, but the engineering around it is quite different:
-
-| | Python single-file | gemini-web2api-go |
-|---|---|---|
-| Deployment | `python gemini_web2api.py` | Single binary (~25MB Docker image) |
-| Dependencies | stdlib only | Zero runtime dependencies |
-| Fingerprint | urllib default (Google sees an SDK) | **utls Chrome 146** (Google sees a browser) |
-| API auth | ❌ none | ✅ Bearer token / x-api-key |
-| Persistence | ❌ none | ✅ SQLite, 30 days of detail + permanent aggregates |
-| Admin panel | ❌ | ✅ Web UI in Chinese (overview / requests / proxy pool / cookie pool / settings) |
-| Rate limiting | ❌ | ✅ Per-IP-slot concurrency / RPM / RPH quotas |
-| Proxy pool | one static proxy | ✅ Runtime CRUD + failure circuit breaker + rotation |
-| Privacy | n/a | ✅ Prompt/response bodies are **never stored**, metadata only |
-
 ## Quick start
 
 ### Prebuilt binary (simplest)

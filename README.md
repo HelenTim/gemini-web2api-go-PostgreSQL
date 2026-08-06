@@ -25,22 +25,6 @@
 
 不是 Google 官方 API（[generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)）的二次封装——**直接反代浏览器协议**，所以**不需要 Google API Key、不需要付费配额**。
 
-## 跟参考实现的区别
-
-社区有一份单文件 Python 参考实现（同名 `gemini-web2api`，stdlib only）。本项目协议层照搬，但工程能力差异较大：
-
-| 维度 | Python 单文件版 | gemini-web2api-go |
-|---|---|---|
-| 部署 | `python gemini_web2api.py` | 单二进制（~25MB Docker 镜像） |
-| 依赖 | stdlib only | 编译产物零外部依赖 |
-| 指纹 | urllib 默认（Google 视作 SDK） | **utls Chrome 146**（视作浏览器） |
-| API 鉴权 | ❌ 裸奔 | ✅ Bearer token / x-api-key |
-| 持久化 | ❌ 无 | ✅ SQLite，30 天明细 + 永久聚合 |
-| 管理面板 | ❌ | ✅ 中文 Web UI（概览 / 请求记录 / 代理池 / Cookie 池 / 设置） |
-| 限流保护 | ❌ | ✅ 每 IP slot 独立并发/RPM/RPH 限额 |
-| 代理池 | 单一静态代理 | ✅ 运行时增删改 + 失败熔断 + 轮询调度 |
-| 隐私 | n/a | ✅ Prompt/Response 内容**永不入库**，只存元数据 |
-
 ## 快速开始
 
 ### 下载二进制（最省事）
