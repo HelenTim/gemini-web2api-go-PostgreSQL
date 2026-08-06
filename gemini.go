@@ -214,10 +214,6 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		return nil, err
 	}
 
-	form := url.Values{}
-	form.Set("f.req", string(outerJSON))
-	body := form.Encode()
-
 	reqid := time.Now().Unix() % 1000000
 	endpoint := fmt.Sprintf(
 		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
@@ -225,6 +221,17 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 	)
 
 	cookieStr, sapisid, cookieID := loadCookie()
+
+	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
+	// 匿名请求不需要，getXSRF 对空 cookie 返回空串。见 xsrf.go。
+	buildBody := func(at string) string {
+		form := url.Values{}
+		form.Set("f.req", string(outerJSON))
+		if at != "" {
+			form.Set("at", at)
+		}
+		return form.Encode()
+	}
 
 	// 通过限流器拿一个 slot（代理或直连）。所有 slot 满 → 直接 429。
 	picked, slotOK, slotErr := acquireSlot()
@@ -239,11 +246,20 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 	}
 	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
 
+	// 取 XSRF token 要走跟正式请求同一个出口，否则 token 和请求来自两个 IP。
+	xsrfToken, xerr := getXSRF(cookieStr, proxyURL)
+	if xerr != nil {
+		markCookieByStatus(cookieID, 401, xerr.Error())
+		return nil, fmt.Errorf("cookie 无法使用：%w", xerr)
+	}
+	body := buildBody(xsrfToken)
+
 	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
 	var lastErr error
 	// 最后一次拿到的 HTTP 状态码，0 表示网络层就失败了没拿到响应。
 	// cookie 健康度只认 401/403，别的状态不算 cookie 的错，见 markCookieByStatus。
 	lastStatus := 0
+	xsrfRetried := false // XSRF 自愈只做一次，避免死循环
 	t0 := time.Now()
 
 	tracker := &deltaTracker{}
@@ -276,6 +292,18 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			continue
 		}
 		if statusCode != 200 {
+			// token 过期时上游回 400 + xsrf。作废缓存重取一次再打，
+			// 这种自愈不算进重试预算，否则一次过期就吃掉全部重试。
+			if statusCode == 400 && isXSRFError(string(raw)) && cookieStr != "" && !xsrfRetried {
+				xsrfRetried = true
+				invalidateXSRF(cookieStr)
+				if tok, e := getXSRF(cookieStr, proxyURL); e == nil {
+					body = buildBody(tok)
+					geminiHeaders = buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
+					attempt--
+					continue
+				}
+			}
 			lastErr = fmt.Errorf("upstream HTTP %d: %s", statusCode, truncate(string(raw), 200))
 			lastStatus = statusCode
 			if pickedOK {
@@ -553,8 +581,13 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 		rtCfg().GeminiBL, reqid,
 	)
 
-	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关
+	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关。
+	// 但 at 必须带——否则挂了 cookie 之后连通性探测会一直报 400，假报故障。
 	cookieStr, sapisid, _ := loadCookie()
+	if tok, e := getXSRF(cookieStr, proxyURL); e == nil && tok != "" {
+		form.Set("at", tok)
+		body = form.Encode()
+	}
 	headers := buildGeminiHeaders(cookieStr, sapisid, probeModel.HexID)
 
 	// 复用主流程同款 client 选择规则:有代理走 stdlib，没代理走 tls-client。
