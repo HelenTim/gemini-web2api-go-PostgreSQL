@@ -1,109 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="276" viewBox="0 0 1280 276" role="img" aria-label="gemini-web2api-go — Gemini web protocol to OpenAI-compatible API">
-<defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#0C1220"/><stop offset="1" stop-color="#070B14"/>
-  </linearGradient>
-  <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="#4285F4"/><stop offset="0.58" stop-color="#9B72CB"/>
-    <stop offset="1" stop-color="#D96570"/>
-  </linearGradient>
-  <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-    <feGaussianBlur stdDeviation="2.4" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-  </filter>
-</defs>
-<rect width="1280" height="276" fill="url(#bg)"/>
-<rect x="0" y="0" width="1280" height="2" fill="url(#sweep)" opacity=".85"/>
-<text x="25.700000000000045" y="72" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="34" font-weight="600" letter-spacing="-0.5" fill="#F2F5FA">gemini-web2api-go</text>
-<text x="25.700000000000045" y="102" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="14.5" fill="#7C8AA5" letter-spacing="0.2">gemini.google.com  <tspan fill="#9B72CB">&#8594;</tspan>  OpenAI-compatible /v1  <tspan fill="#2D3B55">|</tspan>  single Go binary</text>
-<text x="1254" y="58" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12.5" fill="#8FA0BE" text-anchor="end">gemini-3.6-flash</text>
-<text x="1254" y="77" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12.5" fill="#66748F" text-anchor="end">gemini-3.5-flash-lite</text>
-<text x="1254" y="96" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12.5" fill="#66748F" text-anchor="end">gemini-3.1-pro</text>
-<rect x="25.7" y="142" width="12" height="44" rx="2.5" fill="#4285F4" filter="url(#glow)"/>
-<rect x="41.1" y="142" width="12" height="44" rx="2.5" fill="#4485F3" filter="url(#glow)"/>
-<rect x="56.5" y="142" width="12" height="44" rx="2.5" fill="#4684F2" filter="url(#glow)"/>
-<rect x="71.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="87.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="102.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="118.1" y="142" width="12" height="44" rx="2.5" fill="#4E83EF" filter="url(#glow)"/>
-<rect x="133.5" y="142" width="12" height="44" rx="2.5" fill="#5082EE" filter="url(#glow)"/>
-<rect x="148.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="164.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="179.7" y="142" width="12" height="44" rx="2.5" fill="#5581EB" filter="url(#glow)"/>
-<rect x="195.1" y="142" width="12" height="44" rx="2.5" fill="#5780EA" filter="url(#glow)"/>
-<rect x="210.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="225.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="241.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="256.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="272.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="287.5" y="142" width="12" height="44" rx="2.5" fill="#637EE5" filter="url(#glow)"/>
-<rect x="302.9" y="142" width="12" height="44" rx="2.5" fill="#657EE4" filter="url(#glow)"/>
-<rect x="318.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="333.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="349.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="364.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="379.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="395.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="410.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="426.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="441.5" y="142" width="12" height="44" rx="2.5" fill="#767ADC" filter="url(#glow)"/>
-<rect x="456.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="472.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="487.7" y="142" width="12" height="44" rx="2.5" fill="#7C79D9" filter="url(#glow)"/>
-<rect x="503.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="518.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="533.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="549.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="564.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="580.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="595.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="610.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="626.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="641.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="657.1" y="142" width="12" height="44" rx="2.5" fill="#9274CF" filter="url(#glow)"/>
-<rect x="672.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="687.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="703.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="718.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="734.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="749.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="764.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="780.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="795.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="811.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="826.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="841.9" y="142" width="12" height="44" rx="2.5" fill="#A86FB7" filter="url(#glow)"/>
-<rect x="857.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="872.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="888.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="903.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="918.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="934.3" y="142" width="12" height="44" rx="2.5" fill="#B46DA7" filter="url(#glow)"/>
-<rect x="949.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="965.1" y="142" width="12" height="44" rx="2.5" fill="#B76CA1" filter="url(#glow)"/>
-<rect x="980.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="995.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1011.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1026.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1042.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1057.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1072.9" y="142" width="12" height="44" rx="2.5" fill="#C4698E" filter="url(#glow)"/>
-<rect x="1088.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1103.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1119.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1134.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1149.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1165.3" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1180.7" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1196.1" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1211.5" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1226.9" y="183" width="12" height="3" rx="1.5" fill="#202B42"/>
-<rect x="1242.3" y="142" width="12" height="44" rx="2.5" fill="#D96570" filter="url(#glow)"/>
-<text x="31.7" y="206" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="11" fill="#55648A" text-anchor="middle">0</text>
-<text x="62.5" y="206" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="11" fill="#55648A" text-anchor="middle">2</text>
-<text x="293.5" y="206" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="11" fill="#55648A" text-anchor="middle">17</text>
-<text x="663.1" y="206" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="11" fill="#55648A" text-anchor="middle">41</text>
-<text x="940.3" y="206" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="11" fill="#55648A" text-anchor="middle">59</text>
-<text x="1248.3" y="206" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="11" fill="#55648A" text-anchor="middle">79</text>
-<text x="25.700000000000045" y="250" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="13" fill="#5E6E8C"><tspan fill="#8FA0BE">f.req</tspan> inner array &#183; 80 positional slots, 17 carry the request</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="260" viewBox="0 0 1280 260" role="img" aria-label="gemini-web2api-go — the Gemini web protocol, spoken as OpenAI">
+<defs><linearGradient id="sweep" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#4285F4"/><stop offset="0.55" stop-color="#9B72CB"/><stop offset="1" stop-color="#D96570"/></linearGradient></defs>
+<rect width="1280" height="260" fill="#0D1117"/>
+<text x="640.0" y="112" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="46" font-weight="600" letter-spacing="-1.2" fill="#E9EEF6" text-anchor="middle">gemini-web2api-go</text>
+<rect x="450.0" y="136" width="380" height="2.5" rx="1.25" fill="url(#sweep)"/>
+<text x="640.0" y="174" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="15" fill="#8695AE" text-anchor="middle">gemini.google.com &#8594; OpenAI-compatible /v1</text>
+<rect x="396.6" y="200" width="101.0" height="27" rx="13.5" fill="#161C26" stroke="#242C3A"/>
+<text x="447.1" y="218" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12" fill="#7D8CA6" text-anchor="middle">no account</text>
+<rect x="508.6" y="200" width="101.0" height="27" rx="13.5" fill="#161C26" stroke="#242C3A"/>
+<text x="559.1" y="218" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12" fill="#7D8CA6" text-anchor="middle">no API key</text>
+<rect x="620.6" y="200" width="143.6" height="27" rx="13.5" fill="#161C26" stroke="#242C3A"/>
+<text x="692.4" y="218" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12" fill="#7D8CA6" text-anchor="middle">single Go binary</text>
+<rect x="775.2" y="200" width="108.1" height="27" rx="13.5" fill="#161C26" stroke="#242C3A"/>
+<text x="829.3" y="218" font-family="ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace" font-size="12" fill="#7D8CA6" text-anchor="middle">admin panel</text>
 </svg>
