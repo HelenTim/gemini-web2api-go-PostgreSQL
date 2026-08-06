@@ -25,6 +25,31 @@
 
 不是 Google 官方 API（[generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)）的二次封装——**直接反代浏览器协议**，所以**不需要 Google API Key、不需要付费配额**。
 
+## 功能
+
+**接口**
+- OpenAI 兼容：`/v1/chat/completions`、`/v1/models`、`/v1/responses`
+- 普通对话真流式：上游每出一帧就转发增量（带 `tools` 的请求和 `/v1/responses` 是收完再发）
+- Bearer token / `x-api-key` 鉴权，key 可在面板轮换
+- `usage` 用 tiktoken 算，`reasoning_tokens` 单列不计入 `completion_tokens`
+
+**模型**
+- `gemini-3.6-flash`、`gemini-3.5-flash-lite` 匿名可用，含联网搜索
+- `gemini-3.1-pro` 挂 cookie 后可用，每次回答带思考链（`reasoning_content`）
+- 响应里记录服务端**实际**用了哪个模型，被静默降级一眼可见
+
+**扛封**
+- utls 模拟 Chrome 146 真 TLS 指纹，不是 SDK 默认握手
+- 每个出口 IP 独立限流：并发 / RPM / RPH 三档
+- 代理池：运行时增删改、失败熔断、轮转调度，每个代理是独立限流槽
+- Cookie 池：多个 Google 账号按最久未用优先轮转
+
+**运维**
+- 单二进制，交叉编译 6 平台；容器镜像基于 distroless
+- SQLite 持久化：30 天请求明细 + 永久聚合统计
+- 中文管理面板：概览 / 请求记录 / 代理池 / Cookie 池 / 设置，配置改完即时生效
+- **prompt 和回复内容永不入库**，只存元数据（长度、耗时、模型、状态）
+
 ## 快速开始
 
 ### 下载二进制（最省事）
@@ -470,8 +495,7 @@ docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
 | 挂了 cookie 后请求全部 502 | cookie 已失效，取不到 XSRF token | 重新导出 cookie。判据：请求 `gemini-3.1-pro` 若回报 3.5 Flash-Lite 就是失效了 |
 | 面板打不开 / 401 | `--admin-token`（或 `ADMIN_TOKEN`）没对上 | token 留空则不鉴权，只有绑 127.0.0.1 时才可接受 |
 
-Docker 用默认 bridge 网络时上游可能返回空内容（Google 拒绝某些 NAT 段）——这是 Python 参考实现
-README 报告的现象，本项目**没有复现过**。真遇到可以试 `network_mode: host` 验证是不是这个原因。
+Docker 用默认 bridge 网络时上游可能返回空内容（Google 拒绝某些 NAT 段）。本项目**没有复现过**，真遇到可以试 `network_mode: host` 验证是不是这个原因。
 
 ## 致谢
 

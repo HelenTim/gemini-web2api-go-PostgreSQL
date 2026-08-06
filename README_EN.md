@@ -25,6 +25,37 @@ It turns a call like this:
 
 This is not a wrapper around Google's official API ([generativelanguage.googleapis.com](https://generativelanguage.googleapis.com)) — it proxies **the browser protocol directly**, so **no Google API key and no paid quota are required**.
 
+## Features
+
+**API**
+- OpenAI-compatible: `/v1/chat/completions`, `/v1/models`, `/v1/responses`
+- Real incremental streaming for plain chat (requests with `tools`, and `/v1/responses`, are buffered then sent)
+- Bearer token / `x-api-key` auth; the key can be rotated from the panel
+- `usage` computed with tiktoken; `reasoning_tokens` counted separately, not folded
+  into `completion_tokens`
+
+**Models**
+- `gemini-3.6-flash` and `gemini-3.5-flash-lite` work anonymously, web search included
+- `gemini-3.1-pro` needs a cookie; every reply carries a reasoning chain
+  (`reasoning_content`)
+- Every response records which model the backend **actually** used, so silent
+  downgrades are visible
+
+**Staying unblocked**
+- Real Chrome 146 TLS fingerprint via utls, not a default SDK handshake
+- Per-exit-IP limits: concurrency / RPM / RPH
+- Proxy pool: runtime CRUD, failure circuit breaker, rotation — each proxy is its
+  own rate-limit slot
+- Cookie pool: several Google accounts rotated least-recently-used first
+
+**Operations**
+- Single binary, cross-compiled for 6 platforms; container image built on distroless
+- SQLite persistence: 30 days of per-request detail plus permanent aggregates
+- Admin panel: overview / requests / proxy pool / cookie pool / settings, with
+  config changes applied without a restart
+- **Prompt and response bodies are never stored** — metadata only (length, latency,
+  model, status)
+
 ## Quick start
 
 ### Prebuilt binary (simplest)
@@ -418,7 +449,7 @@ docker-compose.yml   single container, sqlite volume, exposed locally on 8083
 | Every request returns 502 after attaching a cookie | The cookie expired, so the XSRF token can't be fetched | Re-export the cookie. Quick check: if `gemini-3.1-pro` reports 3.5 Flash-Lite, it's expired |
 | Panel won't open / 401 | `--admin-token` (or `ADMIN_TOKEN`) doesn't match | An empty token disables auth, which is only acceptable when bound to 127.0.0.1 |
 
-With Docker's default bridge network, upstream may return empty content (Google rejects certain NAT ranges). That is reported in the Python reference implementation's README; we have **never reproduced it here**. If you hit it, try `network_mode: host` to confirm whether that is the cause.
+With Docker's default bridge network, upstream may return empty content (Google rejects certain NAT ranges). We have **never reproduced it here**. If you hit it, try `network_mode: host` to confirm whether that is the cause.
 
 ## Acknowledgments
 
