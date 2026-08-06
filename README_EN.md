@@ -404,27 +404,32 @@ This does not change the blocking threshold, though: in a same-start comparison,
 ## Project layout
 
 ```
-main.go              entry point + flag parsing + route registration
-config.go            config loading + DEFAULT_CONFIG
-client.go            tls-client (chrome146) + stdlib (proxied) dual client
-gemini.go            model table + 80-slot payload + model header + StreamGenerate + wrb.fr stream parsing
-messages.go          OpenAI messages → prompt + tool_call parsing
-server.go            /v1/* + rate-limit gate + request validation + metrics writes
-sse.go               SSE writer for chat.completion.chunk (lazy headers)
-ratelimit.go         per-IP-slot concurrency/RPM/RPH limiter
-tokenizer.go         tiktoken cl100k_base singleton
-apikey.go            API key management (locked / runtime-mutable)
-db.go                SQLite schema + sessions + requests + accounts + kv
-proxy.go             proxy pool CRUD + capacity-aware scheduling + circuit breaker
-cookie_pool.go       cookie pool data layer (accounts CRUD + least-recently-used pick)
-scheduler.go         hourly/daily aggregation + retention
-admin.go             /admin/api/* auth + REST endpoints
-admin_cookies.go     cookie pool REST endpoints (redacted before returning)
-admin_ui.go          embeds admin_ui/ static files
-admin_ui/index.html  single-page admin (Chinese UI)
-admin_ui/chart.umd.min.js  Chart.js embedded in the binary, no CDN
-Dockerfile           multi-stage (alpine builder → distroless runtime)
-docker-compose.yml   single container, sqlite volume, exposed locally on 8083
+main.go                    just calls app.Run(); the entry stays at the root so `go build .` works
+internal/app/              everything else
+  app.go                   flag parsing + route registration + startup
+  config.go                config loading + defaults
+  client.go                tls-client (chrome146) + stdlib (when proxied)
+  gemini.go                model table + 80-slot payload + model header + StreamGenerate + wrb.fr parsing
+  xsrf.go                  XSRF token required with a cookie: fetch + per-cookie cache + self-heal
+  messages.go              OpenAI messages → prompt, tool_call parsing
+  server.go                /v1/* + rate-limit entry + request validation + metrics
+  sse.go                   SSE writer (lazy header, so early failures still return 502 JSON)
+  ratelimit.go             per-IP-slot concurrency / RPM / RPH
+  tokenizer.go             tiktoken cl100k_base singleton
+  apikey.go                API key (locked by flag / rotatable from the panel)
+  db.go                    SQLite schema: sessions / requests / accounts / kv
+  proxy.go                 proxy pool CRUD + capacity scheduling + circuit breaker
+  cookie_pool.go           cookie pool data layer (CRUD + least-recently-used pick + health writeback)
+  scheduler.go             hourly/daily aggregation + retention cleanup
+  runtime.go               runtime config snapshot (panel edits apply instantly)
+  admin.go                 /admin/api/* auth + REST
+  admin_cookies.go         cookie pool admin REST (redacted before returning)
+  admin_ui.go              embeds admin_ui/
+  admin_ui/                admin panel frontend (single page + Chart.js, embedded, no CDN)
+  gemini_test.go           protocol-layer tests: payload slots, wrb.fr parsing, model gating, rate limits
+Dockerfile                 multi-stage (alpine builder → distroless runtime)
+docker-compose.yml         single container, pulls the ghcr image by default, sqlite on a volume
+.github/workflows/         docker.yml pushes images / release.yml publishes binaries on tag
 ```
 
 ## Limitations

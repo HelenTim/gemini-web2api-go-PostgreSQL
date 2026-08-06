@@ -450,27 +450,32 @@ Chrome 指纹得有别的理由（比如担心长期账号画像），不能指�
 ## 项目结构
 
 ```
-main.go              入口 + flag 解析 + 路由注册
-config.go            配置加载 + DEFAULT_CONFIG
-client.go            tls-client (chrome146) + stdlib (代理) 双 client
-gemini.go            模型表 + 80 槽位 payload + 模型 header + StreamGenerate + wrb.fr 流解析
-messages.go          OpenAI messages → prompt + tool_call 解析
-server.go            /v1/* + 限流入口 + 请求字段校验 + metrics 写入
-sse.go               chat.completion.chunk 的 SSE 写出器（懒发 header）
-ratelimit.go         每 IP slot 独立并发/RPM/RPH 限流器
-tokenizer.go         tiktoken cl100k_base 单例
-apikey.go            API key 管理（locked / runtime-mutable 双轨）
-db.go                SQLite schema + sessions + requests + accounts + kv
-proxy.go             代理池 CRUD + 容量调度 + 熔断
-cookie_pool.go       Cookie 池数据层（accounts 表 CRUD + 最久未用优先挑选）
-scheduler.go         小时/天聚合 + 数据保留
-admin.go             /admin/api/* 鉴权 + REST 接口
-admin_cookies.go     Cookie 池的 admin REST 接口（返回前脱敏）
-admin_ui.go          embed admin_ui/ 静态文件
-admin_ui/index.html  单页中文 admin
-admin_ui/chart.umd.min.js  Chart.js 随二进制 embed，不走 CDN
-Dockerfile           multi-stage (alpine builder → distroless runtime)
-docker-compose.yml   单容器,sqlite volume,本地 8083 暴露
+main.go                    只有一句 app.Run()；入口留在根目录，`go build .` 直接可用
+internal/app/              全部实现
+  app.go                   flag 解析 + 路由注册 + 启动
+  config.go                配置加载 + 默认值
+  client.go                tls-client (chrome146) + stdlib (走代理) 双 client
+  gemini.go                模型表 + 80 槽 payload + 模型 header + StreamGenerate + wrb.fr 解析
+  xsrf.go                  带 cookie 时必需的 XSRF token：抓取 + 按 cookie 缓存 + 过期自愈
+  messages.go              OpenAI messages → prompt，tool_call 解析
+  server.go                /v1/* + 限流入口 + 参数校验 + metrics 写入
+  sse.go                   SSE 写出器（懒发 header，失败仍能返回 502 JSON）
+  ratelimit.go             每 IP slot 独立并发 / RPM / RPH 限流
+  tokenizer.go             tiktoken cl100k_base 单例
+  apikey.go                API key（启动参数锁定 / 面板可轮换 双轨）
+  db.go                    SQLite schema：sessions / requests / accounts / kv
+  proxy.go                 代理池 CRUD + 容量调度 + 熔断
+  cookie_pool.go           Cookie 池数据层（CRUD + 最久未用优先挑选 + 健康度回写）
+  scheduler.go             小时/天聚合 + 过期明细清理
+  runtime.go               运行时配置快照（面板改完即时生效）
+  admin.go                 /admin/api/* 鉴权 + REST
+  admin_cookies.go         Cookie 池的 admin REST（返回前脱敏）
+  admin_ui.go              embed admin_ui/
+  admin_ui/                管理面板前端（单页 + Chart.js，随二进制打包，不走 CDN）
+  gemini_test.go           协议层单测：payload 槽位、wrb.fr 解析、模型门控、限流
+Dockerfile                 多阶段构建（alpine builder → distroless runtime）
+docker-compose.yml         单容器，默认拉 ghcr 镜像，sqlite 挂 volume
+.github/workflows/         docker.yml 推镜像 / release.yml 打 tag 发二进制
 ```
 
 ## 限制
