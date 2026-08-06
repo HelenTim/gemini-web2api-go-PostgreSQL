@@ -224,7 +224,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		rtCfg().GeminiBL, reqid,
 	)
 
-	cookieStr, sapisid := loadCookie()
+	cookieStr, sapisid, cookieID := loadCookie()
 
 	// 通过限流器拿一个 slot（代理或直连）。所有 slot 满 → 直接 429。
 	picked, slotOK, slotErr := acquireSlot()
@@ -241,6 +241,9 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 
 	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
 	var lastErr error
+	// 最后一次拿到的 HTTP 状态码，0 表示网络层就失败了没拿到响应。
+	// cookie 健康度只认 401/403，别的状态不算 cookie 的错，见 markCookieByStatus。
+	lastStatus := 0
 	t0 := time.Now()
 
 	tracker := &deltaTracker{}
@@ -274,6 +277,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		}
 		if statusCode != 200 {
 			lastErr = fmt.Errorf("upstream HTTP %d: %s", statusCode, truncate(string(raw), 200))
+			lastStatus = statusCode
 			if pickedOK {
 				recordProxyResult(picked.ID, false, lastErr.Error())
 			}
@@ -288,6 +292,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		if pickedOK {
 			recordProxyResult(picked.ID, true, "")
 		}
+		markCookieByStatus(cookieID, 200, "")
 		return &StreamResult{
 			Emitted:       tracker.emitted,
 			Raw:           string(raw),
@@ -297,6 +302,9 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			TTFBMs:        ttfb,
 			TotalMs:       time.Since(t0).Milliseconds(),
 		}, nil
+	}
+	if lastErr != nil {
+		markCookieByStatus(cookieID, lastStatus, lastErr.Error())
 	}
 	return nil, lastErr
 }
@@ -545,7 +553,8 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 		rtCfg().GeminiBL, reqid,
 	)
 
-	cookieStr, sapisid := loadCookie()
+	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关
+	cookieStr, sapisid, _ := loadCookie()
 	headers := buildGeminiHeaders(cookieStr, sapisid, probeModel.HexID)
 
 	// 复用主流程同款 client 选择规则:有代理走 stdlib，没代理走 tls-client。

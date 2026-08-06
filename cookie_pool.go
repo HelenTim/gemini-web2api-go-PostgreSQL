@@ -126,8 +126,31 @@ func pickCookieAccount() (*CookieAccount, bool) {
 	return &a, true
 }
 
+// markCookieByStatus 按上游返回回写 cookie 健康度。
+//
+// 只把明确的鉴权失败（401/403）算作 cookie 的错。网络错误、代理失败、302 → sorry
+// （IP 被 Google 拦）一律不计——实测住宅代理出口退化率高达 75%，把这些算进
+// fail_count 会让它变成代理噪音，好 cookie 会被误伤成"失败最多"。
+//
+// statusCode 为 0 表示压根没拿到响应（网络层失败）。
+func markCookieByStatus(id int64, statusCode int, errStr string) {
+	switch {
+	case statusCode == 200:
+		markAccountResult(id, true, "")
+	case statusCode == 401 || statusCode == 403:
+		markAccountResult(id, false, errStr)
+	default:
+		// 其余情况责任不在 cookie，不动它的健康度
+	}
+}
+
 // markAccountResult 请求结束后回写结果：成功清零 fail_count 并记 last_ok_at；
 // 失败累加 fail_count 并记 last_error。
+//
+// 注意 last_ok_at 的语义是"这个 cookie 参与的请求成功过"，**不等于"cookie 仍然
+// 有效"**：cookie 过期后 Gemini 不报错，只是把你当匿名用户，纯文本请求照样 200。
+// 要真正验有效性得发一个只有登录态才能用的请求（比如 inner[80]=2 扩展思考，匿名
+// 会静默降级成普通 3.6 Flash 且不返回思考链），那需要先支持登录态功能位。
 func markAccountResult(id int64, ok bool, errStr string) {
 	if id <= 0 {
 		return

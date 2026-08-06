@@ -169,13 +169,16 @@ func currentCookieRaw() string {
 	return v
 }
 
-// loadCookie 返回 (cookie 串, SAPISID)。
+// loadCookie 返回 (cookie 串, SAPISID, 账号 ID)。
 //
 // 优先走 cookie 池：挑一个 enabled 账号（最久未用优先，自动轮转分散单 IP 上限）。
 // 池空时回落到旧的单 cookie（面板 kv 存的或 --cookie-file），保持向后兼容。
-func loadCookie() (string, string) {
+//
+// 第三个返回值是池里那条记录的 ID，请求结束后要拿它调 markCookieByStatus 回写
+// 健康度；回落到单 cookie 或没配 cookie 时是 0，markCookieByStatus 会忽略。
+func loadCookie() (string, string, int64) {
 	if a, ok := pickCookieAccount(); ok {
-		return a.Cookie, extractSAPISID(a.Cookie)
+		return a.Cookie, extractSAPISID(a.Cookie), a.ID
 	}
 
 	// ── 池空：回落旧单 cookie 路径 ──
@@ -183,7 +186,7 @@ func loadCookie() (string, string) {
 	// 或 {"cookie":"...","sapisid":"..."} 的 JSON。
 	content := currentCookieRaw()
 	if content == "" {
-		return "", ""
+		return "", "", 0
 	}
 	if strings.HasPrefix(content, "{") {
 		var obj struct {
@@ -191,9 +194,9 @@ func loadCookie() (string, string) {
 			Sapisid string `json:"sapisid"`
 		}
 		if err := json.Unmarshal([]byte(content), &obj); err != nil {
-			return "", ""
+			return "", "", 0
 		}
-		return obj.Cookie, obj.Sapisid
+		return obj.Cookie, obj.Sapisid, 0
 	}
 	cookieStr := content
 	sapisid := ""
@@ -204,7 +207,7 @@ func loadCookie() (string, string) {
 			}
 		}
 	}
-	return cookieStr, sapisid
+	return cookieStr, sapisid, 0
 }
 
 func makeSAPISIDHash(sapisid string) string {
