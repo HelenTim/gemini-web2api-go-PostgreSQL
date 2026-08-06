@@ -1,9 +1,10 @@
 services:
   gemini-web2api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: gemini-web2api-go:latest
+    # 默认拉现成镜像，不需要源码——把这个文件单独下下来就能跑。
+    # 想从源码构建（改了代码、或者要自己审一遍）就把下面 build 那两行的注释去掉。
+    image: ghcr.io/zexadev/gemini-web2api-go:latest
+    # build:
+    #   context: .
     container_name: gemini-web2api
     restart: unless-stopped
 
@@ -33,14 +34,9 @@ services:
       # API_KEY: "sk-gemini-your-key"
       TZ: "${TZ:-UTC}"
 
-    command:
-      - "--db"
-      - "/data/gemini.db"
-      - "--port"
-      - "8083"
-      # 用兜底 cookie 文件时才需要（面板里粘贴不用这个）
-      # - "--cookie-file"
-      # - "/app/cookie.txt"
+    # 镜像自带 CMD ["--db","/data/gemini.db","--port","8083"]，一般不用改。
+    # 只有要加参数时才写 command，写了就会整个覆盖掉默认值，别漏 --db。
+    # command: ["--db", "/data/gemini.db", "--port", "8083", "--cookie-file", "/app/cookie.txt"]
 
     healthcheck:
       test: ["CMD", "/app/gemini-web2api", "--version"]

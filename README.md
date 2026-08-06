@@ -43,18 +43,35 @@
 
 ## 快速开始
 
-### 编译
+### Docker（不用源码）
 
 ```bash
+docker run -d --name gemini-web2api \
+  -p 127.0.0.1:8083:8083 \
+  -v "$PWD/data:/data" \
+  -e ADMIN_TOKEN=your-admin-token \
+  ghcr.io/zexadev/gemini-web2api-go:latest
+```
+
+用 compose 的话把 `docker-compose.yml` 单独下下来就行，也不用 clone：
+
+```bash
+curl -O https://raw.githubusercontent.com/zexadev/gemini-web2api-go/main/docker-compose.yml
+ADMIN_TOKEN=your-admin-token docker compose up -d
+```
+
+### 从源码跑
+
+装了 Go 就不必绕 Docker：
+
+```bash
+git clone https://github.com/zexadev/gemini-web2api-go
+cd gemini-web2api-go
 go build -o gemini-web2api-go .
 ./gemini-web2api-go --port 8083 --admin-token your-admin-token
 ```
 
-### Docker
-
-```bash
-docker compose up -d --build
-```
+改了代码想用容器跑，把 `docker-compose.yml` 里 `build:` 那两行的注释去掉，再 `docker compose up -d --build`。
 
 启动后会看到 banner：
 

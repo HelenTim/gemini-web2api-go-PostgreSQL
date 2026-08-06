@@ -43,18 +43,36 @@ There is a community single-file Python implementation (same name, `gemini-web2a
 
 ## Quick start
 
-### Build
+### Docker (no source needed)
 
 ```bash
+docker run -d --name gemini-web2api \
+  -p 127.0.0.1:8083:8083 \
+  -v "$PWD/data:/data" \
+  -e ADMIN_TOKEN=your-admin-token \
+  ghcr.io/zexadev/gemini-web2api-go:latest
+```
+
+For compose, just grab the file — no clone required:
+
+```bash
+curl -O https://raw.githubusercontent.com/zexadev/gemini-web2api-go/main/docker-compose.yml
+ADMIN_TOKEN=your-admin-token docker compose up -d
+```
+
+### From source
+
+If you have Go, skip Docker entirely:
+
+```bash
+git clone https://github.com/zexadev/gemini-web2api-go
+cd gemini-web2api-go
 go build -o gemini-web2api-go .
 ./gemini-web2api-go --port 8083 --admin-token your-admin-token
 ```
 
-### Docker
-
-```bash
-docker compose up -d --build
-```
+Changed the code and want it in a container? Uncomment the two `build:` lines in
+`docker-compose.yml`, then `docker compose up -d --build`.
 
 The startup banner:
 
