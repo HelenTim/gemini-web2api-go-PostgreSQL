@@ -105,6 +105,9 @@ type StreamResult struct {
 	// Emitted 是流式模式下已经通过 onDelta 发出去的文本；非流式为空。
 	Emitted string
 	Raw     string
+	// Reasoning 是模型的思考链（只有 3.1 Pro 会产出）。
+	// 上游每次都发，我们以前只取正文、把它扔了。
+	Reasoning string
 	// UpstreamModel 是服务端在响应帧 [42] 里自报的模型显示名。
 	// 跟请求的模型未必一致：gemini-3.1-pro 匿名时被静默降级成 3.5 Flash-Lite，
 	// 只看请求名根本发现不了，所以这个字段要一直记着。
@@ -327,6 +330,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		return &StreamResult{
 			Emitted:       tracker.emitted,
 			Raw:           string(raw),
+			Reasoning:     extractReasoning(string(raw)),
 			UpstreamModel: extractUpstreamModel(string(raw)),
 			ProxyID:       picked.ID,
 			ProxyName:     picked.Name,
@@ -456,6 +460,66 @@ func readBody(r io.Reader, onLine func(string), start time.Time) ([]byte, int64,
 		return buf.Bytes(), ttfb, err
 	}
 	return buf.Bytes(), ttfb, nil
+}
+
+// reasoningInLine 从单个 wrb.fr 行里取出思考链。
+//
+// 位置是 inner[4][0][37][0][0]，比正文（inner[4][0][1][0]）深两层。
+// 只有 3.1 Pro 会产出，3.6 Flash / Flash-Lite 恒为空。
+//
+// 时序（实测一次过河谜题）：思考链在头 5 帧里累积到 660 字符，此时正文还是空；
+// 从第 6 帧起正文开始增长而思考链冻结不再变。两者都是**累积全文**不是增量，
+// 所以流式侧可以直接复用 deltaTracker 的前缀 diff。
+func reasoningInLine(line string) string {
+	if !strings.Contains(line, `"wrb.fr"`) || len(line) < 200 {
+		return ""
+	}
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(line), &arr); err != nil || len(arr) == 0 {
+		return ""
+	}
+	first, ok := arr[0].([]interface{})
+	if !ok || len(first) < 3 {
+		return ""
+	}
+	innerStr, ok := first[2].(string)
+	if !ok || len(innerStr) < 50 {
+		return ""
+	}
+	var inner []interface{}
+	if err := json.Unmarshal([]byte(innerStr), &inner); err != nil || len(inner) <= 4 {
+		return ""
+	}
+	parts, ok := inner[4].([]interface{})
+	if !ok || len(parts) == 0 {
+		return ""
+	}
+	p0, ok := parts[0].([]interface{})
+	if !ok || len(p0) <= 37 {
+		return ""
+	}
+	lvl1, ok := p0[37].([]interface{})
+	if !ok || len(lvl1) == 0 {
+		return ""
+	}
+	lvl2, ok := lvl1[0].([]interface{})
+	if !ok || len(lvl2) == 0 {
+		return ""
+	}
+	s, _ := lvl2[0].(string)
+	return s
+}
+
+// extractReasoning 取整个响应里最长的那段思考链。
+// 取最长而不是最后一个：思考链冻结后，后续帧该位置可能缺失或被截短。
+func extractReasoning(raw string) string {
+	best := ""
+	for _, line := range strings.Split(raw, "\n") {
+		if r := reasoningInLine(line); len(r) > len(best) {
+			best = r
+		}
+	}
+	return best
 }
 
 // textsInLine 从单个 wrb.fr 行里取出候选回复文本。

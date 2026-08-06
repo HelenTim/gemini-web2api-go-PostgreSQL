@@ -55,6 +55,16 @@ func handleOptions(w http.ResponseWriter, r *http.Request) {
 // buildUsage 用 tiktoken 算 token 数，跟 requests 表里记的口径保持一致。
 // responsesAPI=true 时用 /v1/responses 的字段名（input_tokens/output_tokens）。
 func buildUsage(prompt, text string, responsesAPI bool) map[string]int {
+	return buildUsageWithReasoning(prompt, text, "", responsesAPI)
+}
+
+// buildUsageWithReasoning 在 usage 里单列思考链的 token 数。
+//
+// 思考链**不计入** completion_tokens：它是模型自己的推理过程，客户端默认不展示，
+// 算进去等于让用户为看不见的输出买单（下游 newapi 是按 completion_tokens 计费的）。
+// 单列在 completion_tokens_details.reasoning_tokens 里，跟 OpenAI 的做法一致，
+// 想计费的人自己加。
+func buildUsageWithReasoning(prompt, text, reasoning string, responsesAPI bool) map[string]int {
 	in, out := countTokens(prompt), countTokens(text)
 	if responsesAPI {
 		return map[string]int{
@@ -63,11 +73,15 @@ func buildUsage(prompt, text string, responsesAPI bool) map[string]int {
 			"total_tokens":  in + out,
 		}
 	}
-	return map[string]int{
+	u := map[string]int{
 		"prompt_tokens":     in,
 		"completion_tokens": out,
 		"total_tokens":      in + out,
 	}
+	if reasoning != "" {
+		u["reasoning_tokens"] = countTokens(reasoning)
+	}
+	return u
 }
 
 // rejectUnsupported 检查客户端传了但我们兑现不了的字段。
@@ -247,6 +261,11 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		msg["content"] = nil
 	}
+	// 思考链走 reasoning_content —— DeepSeek-R1 带起来的事实标准，newapi 和
+	// 主流客户端都认，会渲染成可折叠的「思考过程」。只有 3.1 Pro 有，其余为空。
+	if res != nil && res.Reasoning != "" {
+		msg["reasoning_content"] = res.Reasoning
+	}
 	finish := "stop"
 	if len(toolCalls) > 0 {
 		msg["tool_calls"] = toolCalls
@@ -280,8 +299,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			"message":       msg,
 			"finish_reason": finish,
 		}},
-		"usage": buildUsage(prompt, text, false),
+		"usage": usageOf(prompt, text, res),
 	})
+}
+
+// usageOf 是 buildUsageWithReasoning 的便捷包装，res 可能为 nil。
+func usageOf(prompt, text string, res *StreamResult) map[string]int {
+	r := ""
+	if res != nil {
+		r = res.Reasoning
+	}
+	return buildUsageWithReasoning(prompt, text, r, false)
 }
 
 // remainingText 返回最终文本里还没通过 onDelta 发出去的部分。
