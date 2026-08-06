@@ -108,6 +108,8 @@ type StreamResult struct {
 	// Reasoning 是模型的思考链（只有 3.1 Pro 会产出）。
 	// 上游每次都发，我们以前只取正文、把它扔了。
 	Reasoning string
+	// EmittedReasoning 是流式下已经通过 onReasoning 发出去的思考链；非流式为空。
+	EmittedReasoning string
 	// UpstreamModel 是服务端在响应帧 [42] 里自报的模型显示名。
 	// 跟请求的模型未必一致：gemini-3.1-pro 匿名时被静默降级成 3.5 Flash-Lite，
 	// 只看请求名根本发现不了，所以这个字段要一直记着。
@@ -189,7 +191,8 @@ func (d *deltaTracker) Push(fullText string) string {
 // onDelta 非 nil 时开启真流式：上游每写一帧就解析一次，跟已发出的内容做前缀
 // diff，把新增部分立刻回调出去。上游每帧带的是累积全文而不是增量，diff 必须
 // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
-func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*StreamResult, error) {
+func streamGenerate(prompt string, mc ModelConfig,
+	onDelta, onReasoning func(string)) (*StreamResult, error) {
 	inner := make([]interface{}, 80)
 	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
 	inner[1] = []interface{}{"en"}
@@ -269,9 +272,21 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 	t0 := time.Now()
 
 	tracker := &deltaTracker{}
+	rtracker := &deltaTracker{}
 	var lineCB func(string)
-	if onDelta != nil {
+	if onDelta != nil || onReasoning != nil {
 		lineCB = func(line string) {
+			// 思考链先推完才轮到正文，所以先处理它，客户端拿到的顺序才对。
+			if onReasoning != nil {
+				if r := reasoningInLine(line); r != "" {
+					if d := rtracker.Push(r); d != "" {
+						onReasoning(d)
+					}
+				}
+			}
+			if onDelta == nil {
+				return
+			}
 			for _, t := range textsInLine(line) {
 				if d := tracker.Push(t); d != "" {
 					onDelta(d)
@@ -287,8 +302,8 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			if pickedOK {
 				recordProxyResult(picked.ID, false, err.Error())
 			}
-			// 已经往客户端吐过内容就不能重试，否则会重复。
-			if tracker.emitted != "" {
+			// 已经往客户端吐过内容就不能重试，否则会重复（思考链也算吐过）。
+			if tracker.emitted != "" || rtracker.emitted != "" {
 				break
 			}
 			if attempt < rtCfg().RetryAttempts-1 {
@@ -315,7 +330,7 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 			if pickedOK {
 				recordProxyResult(picked.ID, false, lastErr.Error())
 			}
-			if tracker.emitted != "" {
+			if tracker.emitted != "" || rtracker.emitted != "" {
 				break
 			}
 			if attempt < rtCfg().RetryAttempts-1 {
@@ -328,14 +343,15 @@ func streamGenerate(prompt string, mc ModelConfig, onDelta func(string)) (*Strea
 		}
 		markCookieByStatus(cookieID, 200, "")
 		return &StreamResult{
-			Emitted:       tracker.emitted,
-			Raw:           string(raw),
-			Reasoning:     extractReasoning(string(raw)),
-			UpstreamModel: extractUpstreamModel(string(raw)),
-			ProxyID:       picked.ID,
-			ProxyName:     picked.Name,
-			TTFBMs:        ttfb,
-			TotalMs:       time.Since(t0).Milliseconds(),
+			Emitted:          tracker.emitted,
+			EmittedReasoning: rtracker.emitted,
+			Raw:              string(raw),
+			Reasoning:        extractReasoning(string(raw)),
+			UpstreamModel:    extractUpstreamModel(string(raw)),
+			ProxyID:          picked.ID,
+			ProxyName:        picked.Name,
+			TTFBMs:           ttfb,
+			TotalMs:          time.Since(t0).Milliseconds(),
 		}, nil
 	}
 	if lastErr != nil {
@@ -512,6 +528,10 @@ func reasoningInLine(line string) string {
 
 // extractReasoning 取整个响应里最长的那段思考链。
 // 取最长而不是最后一个：思考链冻结后，后续帧该位置可能缺失或被截短。
+//
+// 必须跟 extractResponseText 一样过 cleanGeminiText：流式侧 deltaTracker 推的是
+// 清洗过的文本，这里不清洗的话两者前缀对不上，收尾补发时会把整段思考链重发一遍
+// （实测块顺序变成 R→C→R）。
 func extractReasoning(raw string) string {
 	best := ""
 	for _, line := range strings.Split(raw, "\n") {
@@ -519,7 +539,7 @@ func extractReasoning(raw string) string {
 			best = r
 		}
 	}
-	return best
+	return cleanGeminiText(best)
 }
 
 // textsInLine 从单个 wrb.fr 行里取出候选回复文本。

@@ -64,6 +64,16 @@ func (s *sseWriter) chunk(delta map[string]interface{}, finish interface{}, usag
 }
 
 // SendContent 发一段正文增量，供 streamGenerate 的 onDelta 回调直接使用。
+// SendReasoning 推思考链增量。上游先把思考链推完才开始推正文，所以客户端会
+// 先看到「思考过程」再看到答案，跟网页端的观感一致。
+func (s *sseWriter) SendReasoning(delta string) {
+	if delta == "" {
+		return
+	}
+	s.start()
+	s.chunk(map[string]interface{}{"reasoning_content": delta}, nil, nil)
+}
+
 func (s *sseWriter) SendContent(delta string) {
 	if delta == "" {
 		return

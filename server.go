@@ -116,8 +116,8 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
 }
 
 func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{},
-	onDelta func(string)) (string, []ToolCall, *StreamResult, error) {
-	res, err := streamGenerate(prompt, mc, onDelta)
+	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
+	res, err := streamGenerate(prompt, mc, onDelta, onReasoning)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -228,15 +228,16 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 只有无 tools 时才真流式：tool_call 块必须拿到完整文本才能 regex 解析，
 	// 边出边转发会把 ```tool_call``` 原文推给客户端。
 	var sse *sseWriter
-	var onDelta func(string)
+	var onDelta, onReasoning func(string)
 	if stream {
 		sse = newSSEWriter(w, cid, created, modelName)
 		if len(tools) == 0 {
 			onDelta = sse.SendContent
+			onReasoning = sse.SendReasoning
 		}
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta)
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta, onReasoning)
 	if err != nil {
 		recordRequest("chat.completions", modelName, prompt, "", nil, 502, err.Error(), stream)
 		if sse != nil && sse.Started() {
@@ -276,9 +277,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if stream {
 		var usage map[string]int
 		if includeUsage {
-			usage = buildUsage(prompt, text, false)
+			usage = usageOf(prompt, text, res)
 		}
 		// 真流式已发出的不重发，只补尾巴；有 tools 时没走真流式，这里发全量。
+		// 思考链同理，且要在正文之前补——保持「先思考后回答」的顺序。
+		if res != nil && res.Reasoning != "" {
+			if rest := remainingOf(res.Reasoning, res.EmittedReasoning); rest != "" {
+				sse.SendReasoning(rest)
+			}
+		}
 		if rest := remainingText(text, res); rest != "" {
 			sse.SendContent(rest)
 		}
@@ -315,11 +322,19 @@ func usageOf(prompt, text string, res *StreamResult) map[string]int {
 // remainingText 返回最终文本里还没通过 onDelta 发出去的部分。
 // 真流式下通常只剩末尾一点或为空；没走真流式时 Emitted 为空，返回全文。
 func remainingText(text string, res *StreamResult) string {
-	if res == nil || res.Emitted == "" {
+	if res == nil {
 		return text
 	}
-	if strings.HasPrefix(text, res.Emitted) {
-		return text[len(res.Emitted):]
+	return remainingOf(text, res.Emitted)
+}
+
+// remainingOf 返回 full 里还没发出去的尾巴。emitted 为空时返回全文。
+func remainingOf(full, emitted string) string {
+	if emitted == "" {
+		return full
+	}
+	if strings.HasPrefix(full, emitted) {
+		return full[len(emitted):]
 	}
 	// 前缀对不上（上游中途改写过），已发的收不回，不再补发以免重复。
 	return ""
@@ -456,7 +471,8 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, nil)
+	// Responses API 这条路目前不做真流式，两个回调都传 nil
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, nil, nil)
 	if err != nil {
 		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), false)
 		if rle, ok := err.(*RateLimitError); ok {
