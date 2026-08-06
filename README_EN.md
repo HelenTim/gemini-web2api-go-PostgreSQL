@@ -10,8 +10,6 @@
 
 Turn the Google Gemini web app into an OpenAI-compatible API. **Single binary**, **no account needed** (anonymous works), **real Chrome 146 fingerprint**, **SQLite persistence**, ships with an **admin dashboard**.
 
-> The protocol layer was aligned field by field against a community Python single-file reference implementation (also called `gemini-web2api`, stdlib only), and the equivalence was verified.
-
 ---
 
 ## What this is
@@ -409,7 +407,6 @@ With Docker's default bridge network, upstream may return empty content (Google 
 
 ## Acknowledgments
 
-- The community Python single-file reference implementation (same name, `gemini-web2api`) — where the protocol layer (80-slot payload, wrb.fr parsing, model id mapping) came from
 - [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — real Chrome TLS fingerprints
 - [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — pure-Go SQLite (CGO-free, builds straight on alpine)
@@ -417,3 +414,7 @@ With Docker's default bridge network, upstream may return empty content (Google 
 ## License
 
 MIT — see [LICENSE](LICENSE)
+
+## Links
+
+- [Sophomoresty/gemini-web2api](https://github.com/Sophomoresty/gemini-web2api) — a Python implementation of the same idea; its approach informed our early work on the Gemini web protocol

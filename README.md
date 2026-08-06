@@ -10,8 +10,6 @@
 
 把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑），**Chrome 146 真指纹**，**SQLite 持久化**，自带**中文管理面板**。
 
-> 协议层逐字段对齐了一份社区的 Python 单文件参考实现（也叫 `gemini-web2api`，stdlib only），等价性已验证。
-
 ---
 
 ## 这是什么
@@ -464,7 +462,6 @@ README 报告的现象，本项目**没有复现过**。真遇到可以试 `netw
 
 ## 致谢
 
-- 社区 Python 单文件参考实现（同名 `gemini-web2api`）—— 协议层（80 槽位 payload、wrb.fr 解析、模型 ID 映射）的参考来源
 - [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — Chrome 真指纹 TLS 库
 - [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
 - [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — 纯 Go SQLite（CGO-free，alpine 直接编）
@@ -472,3 +469,7 @@ README 报告的现象，本项目**没有复现过**。真遇到可以试 `netw
 ## License
 
 MIT — 详见 [LICENSE](LICENSE)
+
+## 友情链接
+
+- [Sophomoresty/gemini-web2api](https://github.com/Sophomoresty/gemini-web2api) —— 同类的 Python 实现，早期摸 Gemini 网页协议时借鉴过它的思路
