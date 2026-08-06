@@ -1,5 +1,7 @@
 # gemini-web2api-go
 
+<img src="docs/banner.svg" alt="gemini-web2api-go" width="100%">
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.21%2B-00ADD8.svg)](https://golang.org)
 [![Docker](https://img.shields.io/badge/docker-distroless-blue)](Dockerfile)
@@ -147,17 +149,48 @@ Gemini's backend only recognises three models (the list comes from `batchexecute
 |---|---|
 | `gemini-3.6-flash` | All-round, default |
 | `gemini-3.5-flash-lite` | Fast and lightweight |
-| `gemini-3.1-pro` | **Only exposed when a cookie is configured**, see below |
+| `gemini-3.1-pro` | Most capable, **needs a cookie**; every reply carries a reasoning chain |
 
 Without a cookie, `/v1/models` returns only the first two, and asking for `gemini-3.1-pro` fails with an explanation. An anonymous request for it is always silently downgraded to 3.5 Flash-Lite — better to fail at model selection than to hand back a reply that "succeeded" but isn't Pro.
+
+With a valid cookie it really is Pro: six consecutive calls all had the backend report `3.1 Pro` itself.
 
 Only those three are exposed. The old names `gemini-3.5-flash`, `gemini-3.5-flash-thinking`, `gemini-3.5-flash-thinking-lite`, `gemini-auto` and `gemini-flash-lite` were **removed** (they now return 400): the backend has no entries for them, and keeping them only suggested there were five distinct models to choose from.
 
 > **`@think=N` is deprecated.** The suffix was written into `inner[17]` and long treated as "thinking depth", but captures show it is the **turn index within a conversation** (first turn `[[0]]`, the follow-up carrying a conversation id `[[1]]`, incrementing from there) — nothing to do with reasoning depth. We open a fresh conversation for every request, so the value is always 0 and the parameter never did anything. The suffix is still accepted and ignored, so existing client configs don't break.
 
+### Reasoning chain (`reasoning_content`)
+
+`gemini-3.1-pro` emits its own reasoning before every answer. The project exposes it
+as `reasoning_content`, the de-facto standard field, so clients like newapi, Cherry
+Studio and ChatBox render it as a collapsible "thinking" panel. The other two models
+produce no reasoning chain and the field is then omitted entirely.
+
+Non-streaming:
+
+```json
+{"choices":[{"message":{
+  "role":"assistant",
+  "content":"The core rule of this classic puzzle is...",
+  "reasoning_content":"**Defining the Constraints**\n\nI've successfully defined..."
+}}],
+ "usage":{"prompt_tokens":26,"completion_tokens":337,"reasoning_tokens":77,"total_tokens":363}}
+```
+
+Streaming sends it as `delta.reasoning_content`, and **the whole reasoning chain is
+streamed before any answer text** — that is the order the upstream itself uses, so the
+experience matches the Gemini web UI.
+
+`reasoning_tokens` is counted **separately and is not included in `completion_tokens`**:
+clients collapse the reasoning by default, so billing it would charge users for output
+they never see (newapi bills on `completion_tokens`). Add the two together yourself if
+you do want to bill for it.
+
 ### Known capability boundaries
 
-Anonymous calls (no cookie) only reach the two text models above plus Gemini's built-in web search. Image generation, music, video, deep research, canvas and extended thinking all require a signed-in session; anonymous requests are either refused or downgraded to plain text. `gemini-3.1-pro` is out of reach either way: **anonymously it is downgraded to 3.5 Flash-Lite, and with a free account's cookie to "3.6 Flash extended"**. Paid subscriptions are untested. The panel's "actual model" column flags these downgrades.
+Anonymous calls (no cookie) only reach the two text models above plus Gemini's built-in web search. `gemini-3.1-pro` is silently downgraded to 3.5 Flash-Lite anonymously, which is why it isn't exposed at all in that case.
+
+Image generation, music, video, deep research and canvas need a signed-in session **and are not implemented here** — they require extra tool slots in the request parameter array that this project does not send yet. The panel's "actual model" column always shows which model the backend really used, so any downgrade is visible.
 
 **Multi-turn context is implemented by flattening `messages` into a single prompt — it is not protocol-level multi-turn.**
 
@@ -227,7 +260,9 @@ All flags:
 
 ## Cookie (optional)
 
-Attaching a Google account cookie makes requests run as a signed-in session. **It still does not get you `gemini-3.1-pro`** — with a free account the Pro model id is downgraded and the backend reports 3.6 Flash. Paid subscriptions are untested.
+Attaching a Google account cookie makes requests run as a signed-in session. What it buys you is **`gemini-3.1-pro` plus its reasoning chain** (see the reasoning section above). Verified on a free account: six consecutive calls all reported `3.1 Pro`.
+
+> Signed-in requests must carry an extra XSRF token. The project fetches it from the Gemini page automatically, caches it per cookie and re-fetches on expiry — nothing to configure. (Missing it makes **every** request fail with 400 while anonymous traffic keeps working — an earlier version hit exactly that.)
 
 A signed-in session unlocks image generation (Nano Banana 2), music (Lyria 3), video, deep research, canvas and extended thinking in the web app, but **none of that is implemented here yet**; today a cookie only changes which session the requests belong to.
 
@@ -241,26 +276,32 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 
 The JSON form `{"cookie": "SID=...; ...", "sapisid": "..."}` is also accepted. Requests carrying `SAPISID` get a computed `SAPISIDHASH` authorization header, so that entry cannot be missing.
 
-**For multiple accounts use the Cookie pool page.** Each request picks an enabled account least-recently-used first and advances the rotation; the single cookie above is used only when the pool is empty. Either path makes `gemini-3.1-pro` appear in the model list (you still don't get real Pro, see above).
+**For multiple accounts use the Cookie pool page.** Each request picks an enabled account least-recently-used first and advances the rotation; the single cookie above is used only when the pool is empty. Either path makes `gemini-3.1-pro` appear in the model list.
 
-An account's "failure count" and "last success" columns **are not updated automatically** yet — request outcomes are not written back to the pool, so those two only change when you edit the account manually.
+An account's "failure count" and "last success" columns update automatically. Only **401/403 counts as the cookie's fault** — network errors, proxy failures and Google blocks (302) are excluded, because residential exits degrade often enough that counting them would turn the failure count into proxy noise and make healthy cookies look like the worst offenders.
+
+Note that "last success" only means a request involving this cookie succeeded; it does **not** prove the cookie is still valid. An expired cookie doesn't error — Gemini just treats you as anonymous. To check validity, send one `gemini-3.1-pro` request: a valid cookie reports `3.1 Pro` and returns a reasoning chain, an expired one is downgraded to 3.5 Flash-Lite.
 
 ## Proxy pool (the core of running this for free)
 
-**Why you need it**: measured, a single IP is redirected to `google.com/sorry/index` after about **85 requests**.
+**Why you need it**: a single IP eventually gets redirected to `google.com/sorry/index`. That threshold is **80-180 requests**, and the wide range is driven by **connection strategy and exit quality, not by how fast you send**:
 
-Load-test sample (two rounds, 15 independent exits total, each driven until it got blocked):
+| Connection strategy | Concurrency | Pacing | Successful requests when blocked |
+|---|---|---|---|
+| Reused connection pool | 10 | no delay | 151 / 172 / 177 |
+| Reused connection pool | 3 | no delay | 103 / 111 |
+| Fresh connection each time | 10 | no delay | 106 / 109 |
+| Fresh connection each time | 1 | 24s apart | 81 / 166 |
 
-| Connection quality | Successful requests when blocked | Spread |
-|---|---|---|
-| Proxy with zero failures | 82 / 84 / 84 / 86 / 87 / 88 / 88 / 88 | **6** |
-| Proxy with failures | 66 / 73 / 78 / 83 / 84 / 86 / 92 | 26 |
+Only a 302 to `/sorry/` counts as blocked, and every exit was pre-screened. The one clean single-variable comparison is connection strategy: concurrency pinned at 10, both arms started together, each run lasting only 80 seconds (too short for exits to drift) — reused connections reached 172/177, fresh connections 106/109. **Keeping connections alive buys roughly 60% more requests per exit.**
 
-**On a clean connection this limit is remarkably stable (82-88).** Once the path has proxy failures the limit arrives *earlier* (as early as 66) — which means some of those "failed" requests did reach Google and were counted. So don't expect to squeeze out extra capacity by retrying failed requests.
+**Slowing down does not help.** The burst arm spanned 103-177 and the slow arm 81-166 — almost completely overlapping, and the slow arm's own two samples differ by a factor of two. The cause is exits degrading over long runs, not pacing.
 
-Control group: 10 IPs × 50 requests each (418 requests) produced **zero rejections from Google**; all failures were at the proxy layer. Up to 50 is entirely safe, 80 approaches the line, and the default `per_ip_rph=80` is the margin left against it.
+**Proxy failures consume the budget early**: the dirtier the path, the sooner the block, because some of those "failed" requests did reach Google and were counted (the slow arm actually sent 195 requests to get 166 successes, 17% more than the success count suggests). Don't expect to squeeze out capacity by retrying failures.
 
-**Being blocked is not fatal**: pushing another 95 requests still got 14 through (about 15%), so the block is probabilistic rather than absolute. Recovery time was not measured in this round; the "6-24 hours" figure quoted previously was inherited, not verified.
+**Once blocked, the block is hard.** Two independent re-probes of 30 requests each, 20s apart, spanning about 10 minutes: **60 requests, zero successes**. Recovery time is untested; all we can say is that nothing slipped through within 20 minutes.
+
+Control group: 10 IPs × 50 requests each (418 requests) produced zero rejections from Google. The default `per_ip_rph=80` sits at the low end of the measured range and needs no adjustment.
 
 **The fix**: add several proxies on the Proxy pool page. **Each proxy is an independent IP slot** with its own concurrency/RPM/RPH allowance, so N proxies means N times the total capacity.
 
@@ -282,6 +323,10 @@ Supported proxy schemes:
 Direct connections (no proxy) go through [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client): the TLS handshake, HTTP/2 SETTINGS frames and ALPS all match a real Chrome 146. From Google's risk-control point of view this is indistinguishable from a real browser.
 
 Proxied connections switch to stdlib `net/http` with `http.ProxyURL` (best compatibility), but the application-layer headers (`Sec-CH-UA`, `Sec-Fetch-*`, `User-Agent`) are still spoofed with Chrome 146's real values.
+
+**Note that through a proxy the TLS fingerprint is still ours, not the exit node's.** HTTP CONNECT only builds a tunnel; the TLS handshake is end-to-end between us and Google. JA3 echo tests confirm it: through the same proxy, stdlib and tls-client produce different JA3s (so the proxy isn't rewriting anything), while stdlib direct and stdlib through a proxy produce identical JA3s (so the proxy layer doesn't touch TLS). **So once a proxy is configured, what Google sees is the Go standard library's fingerprint, not Chrome 146's.**
+
+This does not change the blocking threshold, though: in a same-start comparison, tls-client Chrome_146 reached 111 requests and Go stdlib 103 — a gap of 8, while the variance between exits under identical settings reaches 36% (151 vs 111). Making the proxy path use the Chrome fingerprint needs a different justification (long-term account profiling, say); it won't buy throughput.
 
 **An observation from testing**: a naive SDK call (e.g. Python urllib) that trips risk control gets **HTTP 429**; once disguised as Chrome, tripping it yields **HTTP 302** to `google.com/sorry/index` (the CAPTCHA page). Both are IP blocks, but the 302 confirms Google really does take us for a browser.
 
@@ -340,12 +385,12 @@ docker-compose.yml   single container, sqlite volume, exposed locally on 8083
 
 ## Limitations
 
-- **Anonymous use**: one IP is redirected to the sorry page after about **85 requests** (82-88 measured on clean connections, n=8) → use the proxy pool to scale. `per_ip_rph=80` is the margin left against that
-- **Pro routing**: unavailable. Even signed in with a free account, `gemini-3.1-pro` is downgraded to 3.6 Flash; paid subscriptions untested
+- **Per-IP ceiling**: measured at **80-180 requests** before the sorry-page redirect. The range is that wide because it is driven by **connection strategy and exit quality**, not by how fast you send: at the same concurrency of 10, a reused connection pool reached 172/177 while a fresh connection per request only reached 106/109. `per_ip_rph=80` sits at the bottom of that range → use the proxy pool to scale
+- **Signed-in features**: image generation, music, video, deep research and canvas are not implemented (the protocol is verified to work; what's missing is the request parameter slots)
 - **Function calling**: prompt-level, the model doesn't always answer in the expected format (a real protocol layer isn't available to us)
 - **Multimodal**: unsupported. The web protocol does support image/file upload, image, music and video generation, but all require a signed-in session and none is implemented here
 - **Token counts**: tiktoken estimates (Gemini's real tokenizer is not public), within about ±20% of the true value
-- **Cookie pool rotates but doesn't health-check**: account selection is pure rotation, request outcomes aren't written back, so a broken account is never auto-disabled — you have to disable it in the panel
+- **Cookie pool never auto-removes a bad account**: outcomes are written back (only 401/403 count as the cookie's fault — network errors and 302 blocks don't), but failures never trigger an automatic disable, so you have to do it from the panel. Also `last_ok_at` only means "a request using this cookie succeeded", not that the cookie is still valid — an expired cookie doesn't error, Gemini just treats you as anonymous and plain text requests still return 200
 - **Streaming is only half real**: `/v1/responses` and chat requests carrying `tools` are buffered; only plain chat streams incrementally
 
 ## Troubleshooting
@@ -353,10 +398,11 @@ docker-compose.yml   single container, sqlite volume, exposed locally on 8083
 | Symptom | Most likely cause | What to do |
 |---|---|---|
 | We return **429** | Every IP slot is at its concurrency/RPM/RPH limit. **This is not Google refusing** and no upstream quota was consumed | Add proxies, or raise the limits on the Settings page |
-| Panel diagnostics show **302 → `google.com/sorry/index`** | This exit IP is blocked by Google (after roughly 85 requests) | Change exit / add proxies. The block is probabilistic and lifts after a while — don't hammer retries in place |
+| Panel diagnostics show **302 → `google.com/sorry/index`** | This exit IP is blocked by Google (after 80-180 requests, depending on connection strategy and exit quality) | Change exit / add proxies. **The block is hard, not probabilistic** (60 probes after a block, zero successes), so retrying in place is pointless |
 | Occasional empty responses, logged as an upstream refusal | Upstream transient refusal (`1155`). There is no predictable threshold — it correlates with neither rate, concurrency, nor cumulative count | Resend once and it usually works. **Lowering RPM does not help**: measured, it is unrelated to request rate |
 | Every request times out | This host can't reach `gemini.google.com` | Configure a proxy (panel or `--proxy`). Note that **`HTTPS_PROXY` is not read** |
-| `gemini-3.1-pro` errors out immediately | It isn't exposed without a cookie, by design | See the models section: even with a cookie you don't get real Pro |
+| `gemini-3.1-pro` errors out immediately | It isn't exposed without a cookie, by design | Attach a cookie (Settings page or Cookie pool) and it becomes available |
+| Every request returns 502 after attaching a cookie | The cookie expired, so the XSRF token can't be fetched | Re-export the cookie. Quick check: if `gemini-3.1-pro` reports 3.5 Flash-Lite, it's expired |
 | Panel won't open / 401 | `--admin-token` (or `ADMIN_TOKEN`) doesn't match | An empty token disables auth, which is only acceptable when bound to 127.0.0.1 |
 
 With Docker's default bridge network, upstream may return empty content (Google rejects certain NAT ranges). That is reported in the Python reference implementation's README; we have **never reproduced it here**. If you hit it, try `network_mode: host` to confirm whether that is the cause.
