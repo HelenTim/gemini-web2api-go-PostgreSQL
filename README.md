@@ -267,7 +267,7 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 |---|---|
 | 默认模型 | 客户端没传 `model` 时用哪个 |
 | 每 slot 并发 / RPM / RPH | 限流额度，0 = 不限 |
-| Prompt token 上限 | 超了直接返回 400 `context_length_exceeded`，不静默截断。0 = 不限 |
+| Prompt 字节上限 | 超了直接返回 400 `context_length_exceeded`，不静默截断。按 UTF-8 字节算（上游的墙跟 token 无关），默认 128000。0 = 不限 |
 | 重试次数 / 重试间隔 / 上游超时 | |
 | 明细保留天数 | 过期只删明细，聚合数据永久保留 |
 | TLS 指纹 | `chrome_146`（默认）/ `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0` |
