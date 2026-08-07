@@ -236,9 +236,7 @@ Anonymous calls (no cookie) only reach the two text models above plus Gemini's b
 
 Image generation, music, video, deep research and canvas need a signed-in session **and are not implemented here** — they require extra tool slots in the request parameter array that this project does not send yet. The panel's "actual model" column always shows which model the backend really used, so any downgrade is visible.
 
-**Multi-turn context is implemented by flattening `messages` into a single prompt — it is not protocol-level multi-turn.**
-
-Gemini's web app does support protocol-level multi-turn (the browser sends only the new message plus the conversation id, and the history stays server-side), anonymous sessions included; this project does not implement it yet.
+**Multi-turn context is implemented by flattening `messages` into a single prompt.** The cost is that every turn resends the whole history and is bounded by the single-request input limit — over that limit, a configured cookie lets the history go up as a text attachment instead (see below).
 
 The cost of flattening is resending the whole history each turn, bounded by the single-request input limit.
 

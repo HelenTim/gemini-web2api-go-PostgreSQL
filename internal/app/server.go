@@ -115,16 +115,16 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
 	return nil
 }
 
-func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{},
+func callGemini(prompt, latest string, mc ModelConfig, tools []map[string]interface{},
 	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
-	res, err := streamGenerate(prompt, mc, onDelta, onReasoning)
+	res, err := streamGenerate(prompt, latest, mc, onDelta, onReasoning)
 	if err != nil {
 		// res 非 nil：失败时它只带归属（哪个号 / 哪个出口），给 recordRequest 用
 		return "", nil, res, err
 	}
 	text := extractResponseText(res.Raw)
 	if text == "" {
-		// 上游拒绝时只回一个结束帧、没有内容帧（实测多轮会话 id 被拒时 raw 仅 216
+		// 上游拒绝时只回一个结束帧、没有内容帧（实测被拒时 raw 仅 216
 		// 字节）。这种情况必须报错：以前会当成空回复返回 200 + content:null，
 		// 客户端看不出请求其实失败了。
 		// 注意不能用 BardErrorInfo 判错 —— 正常响应的结束帧里也带这个码。
@@ -215,14 +215,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, err := messagesToPrompt(messages, tools, req["tool_choice"])
-	if err != nil {
-		// 超长且丢无可丢。明确报 400 而不是发出去让上游把用户的问题截掉——
-		// 那样客户端拿到的是一个答非所问的 200，根本看不出请求其实没送到。
-		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
-			"message": err.Error(), "type": "invalid_request_error", "code": "context_length_exceeded"}})
-		return
-	}
+	prompt, latest := messagesToPrompt(messages, tools, req["tool_choice"])
 	if strings.TrimSpace(prompt) == "" {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
 		return
@@ -254,11 +247,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta, onReasoning)
+	text, toolCalls, res, err := callGemini(prompt, latest, modelCfg, tools, onDelta, onReasoning)
 	if err != nil {
 		recordRequest("chat.completions", modelName, prompt, "", res, 502, err.Error(), stream)
 		if sse != nil && sse.Started() {
 			sse.Fail(err) // 已经开流，HTTP 状态码改不了了
+			return
+		}
+		if ptl, ok := err.(*PromptTooLongError); ok {
+			// 明确报 400 而不是发出去让上游把用户的问题截掉 —— 那样客户端拿到的是
+			// 一个答非所问的 200，根本看不出请求其实没送到。
+			writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+				"message": ptl.Error(), "type": "invalid_request_error",
+				"code": "context_length_exceeded"}})
 			return
 		}
 		if rle, ok := err.(*RateLimitError); ok {
@@ -497,12 +498,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt, err := messagesToPrompt(messages, tools, req["tool_choice"])
-	if err != nil {
-		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
-			"message": err.Error(), "type": "invalid_request_error", "code": "context_length_exceeded"}})
-		return
-	}
+	prompt, latest := messagesToPrompt(messages, tools, req["tool_choice"])
 	if strings.TrimSpace(prompt) == "" {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
 		return
@@ -561,7 +557,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	// onReasoning 传 nil：Responses API 有自己的 reasoning 事件形状，跟 chat 的
 	// reasoning_content 不通用，这条路目前不暴露思考链。
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta, nil)
+	text, toolCalls, res, err := callGemini(prompt, latest, modelCfg, tools, onDelta, nil)
 	if err != nil {
 		recordRequest("responses", modelName, prompt, "", res, 502, err.Error(), stream)
 		if stream {
@@ -575,6 +571,14 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 					"error":  map[string]string{"message": err.Error()},
 				},
 			})
+			return
+		}
+		if ptl, ok := err.(*PromptTooLongError); ok {
+			// 明确报 400 而不是发出去让上游把用户的问题截掉 —— 那样客户端拿到的是
+			// 一个答非所问的 200，根本看不出请求其实没送到。
+			writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+				"message": ptl.Error(), "type": "invalid_request_error",
+				"code": "context_length_exceeded"}})
 			return
 		}
 		if rle, ok := err.(*RateLimitError); ok {

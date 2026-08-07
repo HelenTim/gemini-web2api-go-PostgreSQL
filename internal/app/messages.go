@@ -40,16 +40,27 @@ type ToolCallFunction struct {
 // {"type":"function","function":{"name":...}}）。上游没有协议层的工具调用，
 // 只能把约束写进指令。"required" 尤其必要：实测 Gemini 对自己能回答的问题
 // （查天气之类）会直接作答而不调工具，不强制就拿不到 tool_call。
+// 返回 (拼好的 prompt, 最新那条用户消息)。
+//
+// 超长检查不在这里做 —— 挂了 cookie 时超长会转成文本附件，而那要等挑完账号和
+// 出口才知道能不能做，所以判断放在 streamGenerate 里。最新那条消息单独返回，
+// 转附件时用来内联，好让模型不必去文件里找问题。
 func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{},
-	toolChoice interface{}) (string, error) {
-	prompt := buildPrompt(messages, tools, toolChoice)
-	// 按 UTF-8 字节判，不按 token —— 判据见 PromptTooLongError 的注释。
-	if budget := rtCfg().MaxPromptBytes; budget > 0 {
-		if n := len(prompt); n > budget {
-			return "", &PromptTooLongError{Bytes: n, Budget: budget}
+	toolChoice interface{}) (string, string) {
+	return buildPrompt(messages, tools, toolChoice), latestUserMessage(messages)
+}
+
+// latestUserMessage 取最后一条 user 消息的正文，没有则返回空串。
+func latestUserMessage(messages []map[string]interface{}) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		role := getStr(messages[i], "role")
+		if role == "user" || role == "" {
+			if c := strings.TrimSpace(contentToString(messages[i]["content"])); c != "" {
+				return c
+			}
 		}
 	}
-	return prompt, nil
+	return ""
 }
 
 func buildPrompt(messages []map[string]interface{}, tools []map[string]interface{},

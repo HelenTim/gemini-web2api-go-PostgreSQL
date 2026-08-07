@@ -206,40 +206,23 @@ func (d *deltaTracker) Push(fullText string) string {
 // onDelta 非 nil 时开启真流式：上游每写一帧就解析一次，跟已发出的内容做前缀
 // diff，把新增部分立刻回调出去。上游每帧带的是累积全文而不是增量，diff 必须
 // 自己做。一旦已经吐过内容就不再重试——重试会让客户端收到重复文本。
-func streamGenerate(prompt string, mc ModelConfig,
+func streamGenerate(prompt, latest string, mc ModelConfig,
 	onDelta, onReasoning func(string)) (*StreamResult, error) {
-	inner := make([]interface{}, 80)
-	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
-	inner[1] = []interface{}{"en"}
-	inner[2] = []interface{}{"", "", "", nil, nil, nil, nil, nil, nil, ""}
-	inner[6] = []interface{}{0}
-	inner[7] = 1
-	inner[10] = 1
-	inner[11] = 0
-	// 会话内轮次索引；我们每次都是新会话，恒为 0。
-	inner[17] = []interface{}{[]interface{}{0}}
-	inner[18] = 0
-	inner[27] = 1
-	inner[30] = []interface{}{4}
-	// 抓包里浏览器三种场景（有 cookie / 无 cookie / 扩展思考）全是 [1]。
-	// 我们原来写 [2]，是早期抄来的值、协议层已被证伪。含义仍未知，
-	// 匿名两个值都能通，但没有理由继续偏离浏览器。
-	inner[41] = []interface{}{1}
-	inner[53] = 0
-	inner[59] = uuid.NewString()
-	inner[61] = []interface{}{}
-	inner[68] = 1
-	inner[79] = mc.Mode
+	return streamGenerateWithFiles(prompt, latest, mc, nil, onDelta, onReasoning)
+}
 
-	innerJSON, err := json.Marshal(inner)
-	if err != nil {
-		return nil, err
-	}
-	outer := []interface{}{nil, string(innerJSON)}
-	outerJSON, err := json.Marshal(outer)
-	if err != nil {
-		return nil, err
-	}
+// fileRef 是一个已上传附件的引用。
+type fileRef struct {
+	Ref  string // 上传返回的路径，形如 /contrib_service/ttl_1d/…
+	Name string // 展示给模型看的文件名
+}
+
+// streamGenerateWithFiles 同上，但可以带附件。
+//
+// 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
+// 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
+func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, files []fileRef,
+	onDelta, onReasoning func(string)) (*StreamResult, error) {
 
 	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
 	// 否则一个号在几十个出口之间跳，在 Google 眼里就是账号共享的特征。
@@ -253,17 +236,6 @@ func streamGenerate(prompt string, mc ModelConfig,
 	preferProxy := int64(0)
 	if acct != nil {
 		preferProxy = acct.ProxyID
-	}
-
-	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
-	// 匿名请求不需要，getXSRF 对空 cookie 返回空串。见 xsrf.go。
-	buildBody := func(at string) string {
-		form := url.Values{}
-		form.Set("f.req", string(outerJSON))
-		if at != "" {
-			form.Set("at", at)
-		}
-		return form.Encode()
 	}
 
 	// 出错时也要把「用了哪个号 / 哪个出口」带回去，否则失败记录里全是空白。
@@ -344,6 +316,72 @@ func streamGenerate(prompt string, mc ModelConfig,
 		logf("[cookie] 试过的 %d 个账号都不可用，本次降级匿名（能力会退化到匿名档）", len(tried))
 		cookieID, cookieLabel = 0, ""
 	}
+	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
+	// 而且必须走跟正式请求同一个出口。
+	budget := rtCfg().MaxPromptBytes
+	if p, f, used, ferr := prepareContextFile(prompt, latest, budget, cookieStr, proxyURL); ferr != nil {
+		return attrib(ferr)
+	} else if used {
+		prompt, files = p, f
+	}
+	if budget > 0 && len(prompt) > budget {
+		return attrib(&PromptTooLongError{Bytes: len(prompt), Budget: budget})
+	}
+
+	inner := make([]interface{}, 80)
+	if len(files) > 0 {
+		refs := make([]interface{}, 0, len(files))
+		for _, f := range files {
+			refs = append(refs, []interface{}{
+				[]interface{}{f.Ref, 1}, f.Name,
+			})
+		}
+		inner[0] = []interface{}{prompt, 0, nil, refs, nil, nil, 0}
+	} else {
+		inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
+	}
+	inner[1] = []interface{}{"en"}
+	inner[2] = []interface{}{"", "", "", nil, nil, nil, nil, nil, nil, ""}
+	inner[6] = []interface{}{0}
+	inner[7] = 1
+	inner[10] = 1
+	inner[11] = 0
+	// 会话内轮次索引；我们每次都是新会话，恒为 0。
+	inner[17] = []interface{}{[]interface{}{0}}
+	inner[18] = 0
+	inner[27] = 1
+	inner[30] = []interface{}{4}
+	// 抓包里浏览器三种场景（有 cookie / 无 cookie / 扩展思考）全是 [1]。
+	// 我们原来写 [2]，是早期抄来的值、协议层已被证伪。含义仍未知，
+	// 匿名两个值都能通，但没有理由继续偏离浏览器。
+	inner[41] = []interface{}{1}
+	inner[53] = 0
+	inner[59] = uuid.NewString()
+	inner[61] = []interface{}{}
+	inner[68] = 1
+	inner[79] = mc.Mode
+
+	innerJSON, err := json.Marshal(inner)
+	if err != nil {
+		return nil, err
+	}
+	outer := []interface{}{nil, string(innerJSON)}
+	outerJSON, err := json.Marshal(outer)
+	if err != nil {
+		return nil, err
+	}
+
+	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
+	// 匿名请求不需要，getXSRF 对空 cookie 返回空串。见 xsrf.go。
+	buildBody := func(at string) string {
+		form := url.Values{}
+		form.Set("f.req", string(outerJSON))
+		if at != "" {
+			form.Set("at", at)
+		}
+		return form.Encode()
+	}
+
 	body := buildBody(xsrfToken)
 
 	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
