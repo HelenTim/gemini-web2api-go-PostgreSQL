@@ -13,10 +13,12 @@ import (
 
 // 文件上传：两步 resumable，逐字对齐浏览器抓包。
 //
-// 之前按参考实现写过一版单次 multipart 打 content-push.googleapis.com/upload，
-// 那条也能传成功，但**跟浏览器不是一回事**：域名不同、协议不同，而且返回的引用
-// 路径短一截（浏览器那条带 `_Ad6Osdc…` 后缀）。附件能不能被对话引用是服务端说了算，
-// 拿一条形状都不同的路径去赌不值当，所以改成照抄浏览器。
+// 参考实现走的是另一条路 —— 单次 multipart 打 content-push.googleapis.com/upload。
+// 两条都实测能传成功，没有哪条更可靠；选两步只为**跟浏览器一致**，少一处可被
+// 指纹识别的偏离。
+//
+// 注意别拿返回的引用路径长短当判据：浏览器那条带 `_Ad6Osdc…` 后缀、我们这条没有，
+// 但我们的两步版**匿名跑出来同样没有后缀** —— 后缀是登录态带来的，跟走哪条协议无关。
 const uploadHost = "https://push.clients6.google.com/upload/"
 
 // uploadBytes 上传一段字节，返回服务端给的引用路径（形如 /contrib_service/ttl_1d/…）。
