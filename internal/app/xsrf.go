@@ -77,22 +77,25 @@ func getXSRF(cookie, proxyURL string) (string, error) {
 	return token, nil
 }
 
-// fetchXSRF 抓 /app 页面从 HTML 里抠 SNlM0e。
+// fetchAppPage 抓 gemini.google.com/app 的 HTML。
 // 走跟主请求相同的出口：配了代理走 stdlib，没配走 tls-client，
-// 免得 token 和后续请求来自两个不同 IP。
-func fetchXSRF(cookie, proxyURL string) (string, error) {
+// 免得页面里取到的 token 和后续请求来自两个不同 IP。
+// cookie 传空串就是匿名抓（页面照样返回，只是没有登录态字段）。
+func fetchAppPage(cookie, proxyURL string) ([]byte, error) {
 	const pageURL = "https://gemini.google.com/app"
 	headers := map[string]string{
 		"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 		"Accept-Language": "en-US,en;q=0.9",
-		"Cookie":          cookie,
+	}
+	if cookie != "" {
+		headers["Cookie"] = cookie
 	}
 
 	var body []byte
 	if proxyURL != "" {
 		req, err := http.NewRequest("GET", pageURL, nil)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		applyChromeHeaders(req)
 		for k, v := range headers {
@@ -100,36 +103,45 @@ func fetchXSRF(cookie, proxyURL string) (string, error) {
 		}
 		resp, err := getStdlibClient(proxyURL).Do(req)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
-			return "", fmt.Errorf("fetch XSRF page: HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("fetch /app: HTTP %d", resp.StatusCode)
 		}
 		body, err = io.ReadAll(resp.Body)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 	} else {
 		req, err := fhttp.NewRequest("GET", pageURL, nil)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
 		resp, err := getTLSClient().Do(req)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
-			return "", fmt.Errorf("fetch XSRF page: HTTP %d", resp.StatusCode)
+			return nil, fmt.Errorf("fetch /app: HTTP %d", resp.StatusCode)
 		}
 		body, err = io.ReadAll(resp.Body)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
+	}
+	return body, nil
+}
+
+// fetchXSRF 抓 /app 页面从 HTML 里抠 SNlM0e。
+func fetchXSRF(cookie, proxyURL string) (string, error) {
+	body, err := fetchAppPage(cookie, proxyURL)
+	if err != nil {
+		return "", err
 	}
 
 	m := snlm0eRe.FindSubmatch(body)
