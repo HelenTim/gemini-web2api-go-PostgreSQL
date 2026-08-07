@@ -37,8 +37,8 @@ type Config struct {
 	FallbackAnon bool `json:"fallback_anon"`
 	// 是否自动从 /app 页面抓最新 bl 版本号。默认 true。
 	GeminiBLAuto bool `json:"gemini_bl_auto"`
-	// 单次请求 prompt 的 token 上限，0 = 不限。
-	MaxPromptTokens int `json:"max_prompt_tokens"`
+	// 单次请求 prompt 的 UTF-8 字节上限，0 = 不限。
+	MaxPromptBytes int `json:"max_prompt_bytes"`
 }
 
 var (
@@ -74,9 +74,9 @@ func defaultConfig() Config {
 		FallbackDirect:   false,
 		FallbackAnon:     false,
 		GeminiBLAuto:     true,
-		// 实测单请求约 2 万 token 封顶：18,758 稳过、20,579 过、27,479 挂。
-		// 取 18000 留余量——我们用 tiktoken 计数，跟上游真实分词器有偏差。
-		MaxPromptTokens: 18000,
+		// 实测上游的墙在约 13 万 UTF-8 字节：129,950 字节中英文各 3/3 过，
+		// 135,990 字节各 1/3，141,920 字节各 1/3。取 128000 留一点余量。
+		MaxPromptBytes: 128000,
 	}
 }
 

@@ -43,9 +43,10 @@ type ToolCallFunction struct {
 func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{},
 	toolChoice interface{}) (string, error) {
 	prompt := buildPrompt(messages, tools, toolChoice)
-	if budget := rtCfg().MaxPromptTokens; budget > 0 {
-		if n := countTokens(prompt); n > budget {
-			return "", &PromptTooLongError{Tokens: n, Budget: budget}
+	// 按 UTF-8 字节判，不按 token —— 判据见 PromptTooLongError 的注释。
+	if budget := rtCfg().MaxPromptBytes; budget > 0 {
+		if n := len(prompt); n > budget {
+			return "", &PromptTooLongError{Bytes: n, Budget: budget}
 		}
 	}
 	return prompt, nil
@@ -329,17 +330,28 @@ func parseToolChoice(tc interface{}) (string, string) {
 // OpenAI 兼容客户端认得的信号，agentic 客户端收到会自己压缩上下文再试 ——
 // 它比我们盲丢最旧的几段聪明得多。
 //
+// **为什么按字节而不是按 token 判**：静态 IP 上把中英文对齐到同一字节数实测，
+// 两者的墙落在完全相同的位置 —— 约 129,950 字节各 3/3 通过、135,990 字节各 1/3、
+// 141,920 字节各 1/3；而同一批请求的 tiktoken 计数差了 1.9 倍（英文 24,273 对
+// 中文 46,591）。按 token 设阈值的话，同一个数字对英文太松、对中文卡在真实容量的
+// 三分之一左右。
+//
+// 顺带排除了"墙在传输层"：prompt 进 f.req 要先 JSON 再 urlencode，中文每个字节
+// 变成 %XX（3 倍膨胀）、英文基本原样，两者的线上体积差近 3 倍却撞同一堵墙，
+// 所以计的是 prompt 内容的字节数，不是请求体大小。
+//
 // 真要撑住长上下文得走另一条路：把内容转成文件附件。但那需要登录态（匿名能上传、
 // 对话里引用会被服务端回 1100 拒绝），所以现在只能报错。
 type PromptTooLongError struct {
-	Tokens, Budget int
+	Bytes, Budget int
 }
 
 func (e *PromptTooLongError) Error() string {
 	return fmt.Sprintf(
-		"prompt is %d tokens, over the %d-token per-request limit of the Gemini web "+
-			"protocol. The upstream silently truncates from the end, which would drop your "+
-			"latest message and produce an unrelated answer, so this request is rejected "+
-			"instead. Shorten the conversation, the system prompt, or the tool definitions.",
-		e.Tokens, e.Budget)
+		"prompt is %d bytes, over the %d-byte per-request limit of the Gemini web "+
+			"protocol (the limit is on UTF-8 bytes, not tokens). The upstream silently "+
+			"truncates from the end, which would drop your latest message and produce an "+
+			"unrelated answer, so this request is rejected instead. Shorten the "+
+			"conversation, the system prompt, or the tool definitions.",
+		e.Bytes, e.Budget)
 }

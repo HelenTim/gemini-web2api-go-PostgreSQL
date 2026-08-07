@@ -15,11 +15,11 @@ import (
 // 发出去了，模型却忘了东西。报 context_length_exceeded 是 OpenAI 兼容客户端认得
 // 的信号，agentic 客户端收到会自己压缩上下文再试。
 
-func withBudget(t *testing.T, n int) {
+func withBudget(t *testing.T, n int) { // n = 字节预算
 	t.Helper()
 	old := rtCfg()
 	next := old
-	next.MaxPromptTokens = n
+	next.MaxPromptBytes = n
 	rtMu.Lock()
 	rtVal = next
 	rtMu.Unlock()
@@ -43,7 +43,7 @@ func longConversation(turns int) []map[string]interface{} {
 }
 
 func TestPromptOverLimitErrors(t *testing.T) {
-	withBudget(t, 2000)
+	withBudget(t, 20000) // 字节
 
 	_, err := messagesToPrompt(longConversation(200), nil, nil)
 	if err == nil {
@@ -53,11 +53,11 @@ func TestPromptOverLimitErrors(t *testing.T) {
 	if !ok {
 		t.Fatalf("错误类型不对: %T", err)
 	}
-	if e.Budget != 2000 || e.Tokens <= e.Budget {
-		t.Errorf("错误里的数字不对: %d tokens / budget %d", e.Tokens, e.Budget)
+	if e.Budget != 20000 || e.Bytes <= e.Budget {
+		t.Errorf("错误里的数字不对: %d bytes / budget %d", e.Bytes, e.Budget)
 	}
 	// 错误信息要说清为什么被拒，否则用户只会以为是我们坏了
-	for _, want := range []string{"truncates", "latest message", "Shorten"} {
+	for _, want := range []string{"truncates", "latest message", "Shorten", "not tokens"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("错误信息缺少 %q: %v", want, err)
 		}
@@ -66,7 +66,7 @@ func TestPromptOverLimitErrors(t *testing.T) {
 
 // 没超限时一个字都不能动——包括不能有任何"省略了部分历史"之类的注入。
 func TestPromptUnderLimitUntouched(t *testing.T) {
-	withBudget(t, 100000)
+	withBudget(t, 10000000)
 	msgs := longConversation(3)
 
 	got, err := messagesToPrompt(msgs, nil, nil)
@@ -90,7 +90,7 @@ func TestPromptLimitDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("关掉检查后不该报错: %v", err)
 	}
-	if countTokens(got) < 2000 {
+	if len(got) < 20000 {
 		t.Error("关掉检查后不该有任何裁剪")
 	}
 }
@@ -98,7 +98,7 @@ func TestPromptLimitDisabled(t *testing.T) {
 // 上限判的是**整个 prompt**，工具定义也算进去——agentic 客户端的工具 schema
 // 往往比对话本身还大，不算进去等于没设防。
 func TestPromptLimitCountsToolDefs(t *testing.T) {
-	withBudget(t, 500)
+	withBudget(t, 5000)
 	tools := []map[string]interface{}{{"type": "function", "function": map[string]interface{}{
 		"name": "read_file", "description": strings.Repeat("一个很长的工具描述。", 300),
 		"parameters": map[string]interface{}{"type": "object"}}}}

@@ -894,8 +894,8 @@ const RT_GROUPS = [
     fields: [
       { k: 'default_model', label: '默认模型', type: 'select',
         hint: '客户端没传 model 时用哪个' },
-      { k: 'max_prompt_tokens', label: 'Prompt token 上限', type: 'int', min: 0, max: 200000,
-        hint: '超了直接返回 400 context_length_exceeded。上游单请求约 2 万 token 封顶且从尾部静默截断，不拦的话被吃掉的正是刚问的那句，客户端还以为成功了。0=不限' },
+      { k: 'max_prompt_bytes', label: 'Prompt 字节上限', type: 'int', min: 0, max: 10000000,
+        hint: '超了直接返回 400 context_length_exceeded。上游的墙实测在约 13 万 UTF-8 字节，按字节算跟语言无关（同字节数下中英文表现一致，而 token 数差 1.9 倍）。不拦的话上游从尾部静默截断，被吃掉的正是刚问的那句。0=不限' },
       { k: 'impersonate', label: 'TLS 指纹', type: 'text',
         hint: 'chrome_146 / chrome_144 / firefox_147 / safari_16_0 …' },
       { k: 'gemini_bl', label: 'Gemini bl 版本', type: 'text',
