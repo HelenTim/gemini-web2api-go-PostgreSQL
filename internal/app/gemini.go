@@ -223,8 +223,9 @@ type fileRef struct {
 //
 // 附件填 inner[0][3]，形状 [[[ref, 1], "文件名"], …]。附件只在登录态可用：
 // 匿名能把文件传上去，但对话里一引用就被服务端回 1100。
-func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, files []fileRef,
+func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pendingUpload,
 	onDelta, onReasoning func(string)) (*StreamResult, error) {
+	var files []fileRef
 
 	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
 	// 否则一个号在几十个出口之间跳，在 Google 眼里就是账号共享的特征。
@@ -318,13 +319,31 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, files []file
 		logf("[cookie] 试过的 %d 个账号都不可用，本次降级匿名（能力会退化到匿名档）", len(tried))
 		cookieID, cookieLabel = 0, ""
 	}
+	// 图片附件：上传要 cookie，而且必须走跟正式请求同一个出口，所以排在这里。
+	if len(pending) > 0 {
+		if cookieStr == "" {
+			return attrib(fmt.Errorf("image input needs a Google account cookie: " +
+				"anonymous uploads succeed but referencing them in a conversation is " +
+				"rejected upstream. Add a cookie in the admin panel (Cookie pool)"))
+		}
+		for _, u := range pending {
+			ref, uerr := uploadBytes(cookieStr, proxyURL, u.Data, u.Name)
+			if uerr != nil {
+				return attrib(fmt.Errorf("上传图片 %s 失败: %w", u.Name, uerr))
+			}
+			files = append(files, fileRef{Ref: ref, Name: u.Name, Kind: u.Kind, Mime: u.Mime})
+		}
+		logf("[vision] 上传了 %d 张图", len(pending))
+	}
+
 	// prompt 超长时转成文本附件。要等挑完号和出口才能做：上传要 cookie，
 	// 而且必须走跟正式请求同一个出口。
 	budget := rtCfg().MaxPromptBytes
 	if p, f, used, ferr := prepareContextFile(prompt, latest, budget, cookieStr, proxyURL); ferr != nil {
 		return attrib(ferr)
 	} else if used {
-		prompt, files = p, f
+		prompt = p
+		files = append(files, f...)
 	}
 	if budget > 0 && len(prompt) > budget {
 		return attrib(&PromptTooLongError{

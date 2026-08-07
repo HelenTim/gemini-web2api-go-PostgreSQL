@@ -105,8 +105,13 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
 			}
 			switch getStr(cm, "type") {
 			case "image_url", "input_image":
-				return fmt.Errorf("image input not supported: upload works anonymously but " +
-					"referencing the file is rejected upstream (needs a signed-in session)")
+				// 有 cookie 就能收：图会被上传成附件再引用。匿名不行 —— 传得上去，
+				// 但一引用就被服务端拒，收下只会让客户端拿到一个看不懂的失败。
+				if !hasCookie() {
+					return fmt.Errorf("image input needs a Google account cookie: anonymous " +
+						"uploads succeed but referencing them in a conversation is rejected " +
+						"upstream. Add a cookie in the admin panel (Cookie pool)")
+				}
 			case "input_audio":
 				return fmt.Errorf("audio input not supported")
 			}
@@ -116,8 +121,8 @@ func rejectUnsupported(req map[string]interface{}, messages []map[string]interfa
 }
 
 func callGemini(prompt, latest string, mc ModelConfig, tools []map[string]interface{},
-	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
-	res, err := streamGenerate(prompt, latest, mc, onDelta, onReasoning)
+	images []pendingUpload, onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
+	res, err := streamGenerateWithFiles(prompt, latest, mc, images, onDelta, onReasoning)
 	if err != nil {
 		// res 非 nil：失败时它只带归属（哪个号 / 哪个出口），给 recordRequest 用
 		return "", nil, res, err
@@ -215,8 +220,16 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 图片先解出来带着，真正上传要等挑完账号和出口（见 streamGenerate）。
+	images, err := collectImages(messages, "")
+	if err != nil {
+		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+			"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+
 	prompt, latest := messagesToPrompt(messages, tools, req["tool_choice"])
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
 		return
 	}
@@ -247,7 +260,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	text, toolCalls, res, err := callGemini(prompt, latest, modelCfg, tools, onDelta, onReasoning)
+	text, toolCalls, res, err := callGemini(prompt, latest, modelCfg, tools, images, onDelta, onReasoning)
 	if err != nil {
 		recordRequest("chat.completions", modelName, prompt, "", res, 502, err.Error(), stream)
 		if sse != nil && sse.Started() {
@@ -498,8 +511,15 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	images, err := collectImages(messages, "")
+	if err != nil {
+		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+			"message": err.Error(), "type": "invalid_request_error"}})
+		return
+	}
+
 	prompt, latest := messagesToPrompt(messages, tools, req["tool_choice"])
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(prompt) == "" && len(images) == 0 {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
 		return
 	}
@@ -557,7 +577,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 
 	// onReasoning 传 nil：Responses API 有自己的 reasoning 事件形状，跟 chat 的
 	// reasoning_content 不通用，这条路目前不暴露思考链。
-	text, toolCalls, res, err := callGemini(prompt, latest, modelCfg, tools, onDelta, nil)
+	text, toolCalls, res, err := callGemini(prompt, latest, modelCfg, tools, images, onDelta, nil)
 	if err != nil {
 		recordRequest("responses", modelName, prompt, "", res, 502, err.Error(), stream)
 		if stream {
