@@ -338,6 +338,29 @@ func streamGenerate(prompt string, mc ModelConfig,
 			}
 			continue
 		}
+		// HTTP 200 但一个内容帧都没有 —— 上游的瞬时拒绝（响应里那个 1155）。
+		// 它不是限流：干净 IP 间隔 1s 连打 15 次全过、同 IP 并发 10 共 18 次全过、
+		// 打了 60+ 次的 IP 之后照样成功，没有可预测阈值，同样的请求有时成功有时失败。
+		// 重发一次通常就好，所以必须纳入重试——不然一次抖动就变成客户端可见的 502。
+		//
+		// 判据是**有没有内容帧**，不是 BardErrorInfo：正常响应的结束帧里也带错误码
+		// （1096 = 会话未持久化），拿它判错会把每个正常响应都判成失败。
+		if !hasContentFrame(string(raw)) {
+			lastErr = fmt.Errorf("upstream returned no content frame (raw %d bytes)", len(raw))
+			if pickedOK {
+				// 记进代理健康度：1155 跟出口质量强相关（干净出口 60+ 次 0 发生，
+				// 脏出口一天约 9 次），连续踩中说明这个出口该歇了。
+				recordProxyResult(picked.ID, false, lastErr.Error())
+			}
+			if tracker.emitted != "" || rtracker.emitted != "" {
+				break
+			}
+			if attempt < rtCfg().RetryAttempts-1 {
+				logf("retry %d/%d: 空响应（无内容帧，%d 字节）", attempt+1, rtCfg().RetryAttempts, len(raw))
+				time.Sleep(time.Duration(rtCfg().RetryDelaySec) * time.Second)
+			}
+			continue
+		}
 		if pickedOK {
 			recordProxyResult(picked.ID, true, "")
 		}
@@ -585,6 +608,20 @@ func textsInLine(line string) []string {
 		}
 	}
 	return texts
+}
+
+// hasContentFrame 判断响应里到底有没有内容帧。
+//
+// 故意不复用 extractResponseText：那个会先 cleanGeminiText 掉代码产物，一个纯代码
+// 产物的回复在它眼里是空的，但那明明是上游正常出了内容。这里只问"有没有帧"，
+// 判断的是链路成没成功，不是内容合不合用。
+func hasContentFrame(raw string) bool {
+	for _, line := range strings.Split(raw, "\n") {
+		if len(textsInLine(line)) > 0 || reasoningInLine(line) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // extractResponseText parses StreamGenerate's wrb.fr stream and returns the
