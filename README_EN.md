@@ -328,24 +328,30 @@ Note that "last success" only means a request involving this cookie succeeded; i
 
 ## Proxy pool (the core of running this for free)
 
-**Why you need it**: a single IP eventually gets redirected to `google.com/sorry/index`. That threshold is **80-180 requests**, and the wide range is driven by **connection strategy and exit quality, not by how fast you send**:
+**Why you need it**: a single IP sending in bursts eventually gets redirected to `google.com/sorry/index`. That threshold is **80-180 requests**, and the wide range is driven by **connection strategy, exit quality and pacing** together:
 
-| Connection strategy | Concurrency | Pacing | Successful requests when blocked |
-|---|---|---|---|
-| Reused connection pool | 10 | no delay | 151 / 172 / 177 |
-| Reused connection pool | 3 | no delay | 103 / 111 |
-| Fresh connection each time | 10 | no delay | 106 / 109 |
-| Fresh connection each time | 1 | 24s apart | 81 / 166 |
+| Exit | Connection strategy | Concurrency | Pacing | Successful requests when blocked |
+|---|---|---|---|---|
+| residential | Reused connection pool | 10 | no delay | 151 / 172 / 177 |
+| residential | Reused connection pool | 3 | no delay | 103 / 111 |
+| residential | Fresh connection each time | 10 | no delay | 106 / 109 |
+| residential | Fresh connection each time | 1 | 24s apart | 81 / 166 |
+| static | Reused connection pool | 10 | no delay | 188 |
+| static | Reused connection pool | 1 | **10 per minute** | **800, never blocked** |
 
-Only a 302 to `/sorry/` counts as blocked, and every exit was pre-screened. The one clean single-variable comparison is connection strategy: concurrency pinned at 10, both arms started together, each run lasting only 80 seconds (too short for exits to drift) — reused connections reached 172/177, fresh connections 106/109. **Keeping connections alive buys roughly 60% more requests per exit.**
+Only a 302 to `/sorry/` counts as blocked, and every exit was pre-screened.
 
-**Slowing down does not help.** The burst arm spanned 103-177 and the slow arm 81-166 — almost completely overlapping, and the slow arm's own two samples differ by a factor of two. The cause is exits degrading over long runs, not pacing.
+**Connection reuse is worth about 60%**: concurrency pinned at 10, both arms started together, each run lasting only 80 seconds (too short for exits to drift) — reused connections reached 172/177, fresh connections 106/109.
+
+**A steady pace matters more than anything else.** On the same static IP, a burst run was blocked after 188 requests, while a steady 10 requests/minute ran **800 requests over 110 minutes without ever being blocked**. The default `per_ip_rph=80` is therefore a very conservative floor; a deployment that deliberately paces itself can raise it a lot.
+
+> This section previously said "slowing down does not help", based on the burst arm (103-177) and the slow arm (81-166) overlapping almost completely on residential exits. The observation was right but the attribution was wrong: residential exits degrade over long runs (6 of 8 pre-screened exits exceeded a 40% failure rate partway through the slow run), and that degradation swamped the effect of pacing. Once a static IP removes that confound, pacing turns out to matter a great deal.
 
 **Proxy failures consume the budget early**: the dirtier the path, the sooner the block, because some of those "failed" requests did reach Google and were counted (the slow arm actually sent 195 requests to get 166 successes, 17% more than the success count suggests). Don't expect to squeeze out capacity by retrying failures.
 
-**Once blocked, the block is hard.** Two independent re-probes of 30 requests each, 20s apart, spanning about 10 minutes: **60 requests, zero successes**. Recovery time is untested; all we can say is that nothing slipped through within 20 minutes.
+**Once blocked, the block is hard, and it clears after roughly two hours.** Two independent re-probes of 30 requests each, 20s apart, spanning about 10 minutes: **60 requests, zero successes**. Continued probing recovered somewhere between **106 and 121 minutes**. That is where the proxy pool's default 120-minute cooldown comes from.
 
-Control group: 10 IPs × 50 requests each (418 requests) produced zero rejections from Google. The default `per_ip_rph=80` sits at the low end of the measured range and needs no adjustment.
+Control group: 10 IPs × 50 requests each (418 requests) produced zero rejections from Google. The default `per_ip_rph=80` sits at the low end of the measured burst range.
 
 **The fix**: add several proxies on the Proxy pool page. **Each proxy is an independent IP slot** with its own concurrency/RPM/RPH allowance, so N proxies means N times the total capacity.
 
@@ -434,7 +440,7 @@ docker-compose.yml         single container, pulls the ghcr image by default, sq
 
 ## Limitations
 
-- **Per-IP ceiling**: measured at **80-180 requests** before the sorry-page redirect. The range is that wide because it is driven by **connection strategy and exit quality**, not by how fast you send: at the same concurrency of 10, a reused connection pool reached 172/177 while a fresh connection per request only reached 106/109. `per_ip_rph=80` sits at the bottom of that range → use the proxy pool to scale
+- **Per-IP ceiling**: when sending in bursts, measured at **80-180 requests** before the sorry-page redirect (connection reuse buys about 60%: at concurrency 10, a reused pool reached 172/177 versus 106/109 for a fresh connection per request). But **a steady pace barely reaches the ceiling at all** — 10 requests/minute on a static IP ran 800 requests without a block. `per_ip_rph=80` sits at the bottom of the burst range → use the proxy pool to scale, or pace yourself and raise the limit
 - **Signed-in features**: image generation, music, video, deep research and canvas are not implemented (the protocol is verified to work; what's missing is the request parameter slots)
 - **Function calling**: prompt-level, the model doesn't always answer in the expected format (a real protocol layer isn't available to us)
 - **Multimodal**: unsupported. The web protocol does support image/file upload, image, music and video generation, but all require a signed-in session and none is implemented here
