@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,6 +91,13 @@ func proxyUsable(p Proxy, now int64, cooldownMin int) bool {
 	return now-p.LastUsed >= int64(cooldownMin)*60
 }
 
+// kv 里记迁移/播种状态的键。
+const (
+	kvLegacyProxyDone = "legacy_static_proxy_migrated"
+	kvSeededProxyID   = "seeded_proxy_id"
+	kvSeededProxyURL  = "seeded_proxy_url"
+)
+
 // seedProxiesFromConfig 把启动参数和历史遗留的「静态代理」并进代理池。
 //
 // 以前代理有两个入口：代理池，和「设置」页那个单独的静态代理文本框（池空时才用）。
@@ -97,43 +105,44 @@ func proxyUsable(p Proxy, now int64, cooldownMin int) bool {
 // 同一个限流 slot、recordProxyResult 压根不会被调用，也就没有失败计数、没有熔断、
 // 没有冷却、面板上看不到任何状态。池子里放一个，处处严格更好。
 //
-// 现在请求路径只认池子，这个函数负责把旧入口的值搬进来：
-//   - cfg.Proxy（--proxy / config.json）：每次启动 upsert，改了 compose 重启就生效
-//   - kv 里遗留的静态代理：一次性搬进来并清掉，之后从面板管理（不然用户从池子里
-//     删掉它，下次重启又会冒出来）
+// 现在请求路径只认池子，这个函数负责把旧入口的值搬进来。
 func seedProxiesFromConfig() {
-	if v := strings.TrimSpace(takeLegacyStaticProxy()); v != "" {
-		if adopted := adoptProxy(v, "原静态代理"); adopted {
-			logf("[proxy] 「设置」页的静态代理已迁入代理池，该字段已移除")
-		}
-	}
-	if v := strings.TrimSpace(cfg.Proxy); v != "" {
-		if adopted := adoptProxy(v, "启动参数"); adopted {
-			logf("[proxy] --proxy / config.json 的代理已加入代理池")
-		}
-	}
+	migrateLegacyStaticProxy()
+	syncSeededProxy()
 }
 
-// adoptProxy 按 URL 去重地把一个代理放进池子，返回是否真的新建了。
-func adoptProxy(url, name string) bool {
-	proxyMu.RLock()
-	for _, p := range proxyCache {
-		if p.URL == url {
-			proxyMu.RUnlock()
-			return false
+// migrateLegacyStaticProxy 一次性把 kv 里遗留的静态代理搬进池子。
+//
+// 两条保命规则，都是针对"用户的库已经在跑"这个前提：
+//
+//  1. **入池成功才标记完成**，失败就原样留着下次再试。旧版的
+//     validateRuntimeConfig 对这个字段零校验，用户完全可能存的是 `1.2.3.4:8080`
+//     这种缺 scheme 的值，而 proxyCreate 会拒收它 —— 先清值再入池的话，用户升级
+//     后代理凭空消失，流量全转直连然后被上游拦。
+//  2. 用**独立的迁移标记**，不去改写 runtime_config 那个 JSON。少动一次已有数据
+//     就少一分把别的字段写坏的风险；顺带回滚到旧版时那条静态代理还在，行为不变。
+func migrateLegacyStaticProxy() {
+	if kvGet(kvLegacyProxyDone) == "1" {
+		return
+	}
+	v := strings.TrimSpace(legacyStaticProxy())
+	if v == "" {
+		_ = kvSet(kvLegacyProxyDone, "1") // 本来就没有，标记掉免得每次启动都解析一遍
+		return
+	}
+	if !poolHasProxyURL(v) {
+		if _, err := proxyCreate("原静态代理", v, 1); err != nil {
+			logf("[proxy] 「设置」页的静态代理迁入池子失败，原值保留、下次启动重试: %v", err)
+			return
 		}
+		logf("[proxy] 「设置」页的静态代理已迁入代理池")
 	}
-	proxyMu.RUnlock()
-	if _, err := proxyCreate(name, url, 1); err != nil {
-		logf("[proxy] %s 入池失败: %v", name, err)
-		return false
-	}
-	return true
+	_ = kvSet(kvLegacyProxyDone, "1")
 }
 
-// takeLegacyStaticProxy 取出 kv 里遗留的 runtime_config.proxy 并把它抹掉。
-// RuntimeConfig 已经没有这个字段了，所以只能直接操作原始 JSON。
-func takeLegacyStaticProxy() string {
+// legacyStaticProxy 只读地取 kv 里遗留的 runtime_config.proxy。
+// RuntimeConfig 已经没有这个字段了，所以只能直接看原始 JSON。
+func legacyStaticProxy() string {
 	raw := kvGet(runtimeConfigKey)
 	if raw == "" {
 		return ""
@@ -143,14 +152,85 @@ func takeLegacyStaticProxy() string {
 		return ""
 	}
 	v, _ := m["proxy"].(string)
-	if strings.TrimSpace(v) == "" {
-		return ""
-	}
-	delete(m, "proxy")
-	if b, err := json.Marshal(m); err == nil {
-		_ = kvSet(runtimeConfigKey, string(b))
-	}
 	return v
+}
+
+// syncSeededProxy 让池子里跟着 --proxy / config.json 走一条记录。
+//
+// 启动参数是**声明式**的：值变了就更新同一条，而不是再加一条。按 URL 去重的写法
+// 挡不住这个 —— 用户把 compose 里的代理换掉，旧那条会留在池子里继续 enabled、
+// 继续接流量，成了一条谁也不知道还在用的僵尸出口。
+//
+// 值没变时**完全不碰池子**：用户在面板上对这条记录的增删改停用，都以面板为准。
+func syncSeededProxy() {
+	url := strings.TrimSpace(cfg.Proxy)
+	prev := kvGet(kvSeededProxyURL)
+	if url == prev {
+		return
+	}
+	dropSeededProxy(prev)
+	if url == "" {
+		_ = kvSet(kvSeededProxyURL, "")
+		_ = kvSet(kvSeededProxyID, "")
+		logf("[proxy] --proxy 已从启动参数移除，对应的池子记录一并撤下")
+		return
+	}
+	if poolHasProxyURL(url) {
+		// 用户自己已经在面板加过同一个出口，不重复建，只记下来
+		_ = kvSet(kvSeededProxyURL, url)
+		_ = kvSet(kvSeededProxyID, "")
+		return
+	}
+	id, err := proxyCreate("启动参数", url, 1)
+	if err != nil {
+		logf("[proxy] --proxy 入池失败: %v", err)
+		return // 不记 URL，下次启动还会再试
+	}
+	_ = kvSet(kvSeededProxyURL, url)
+	_ = kvSet(kvSeededProxyID, strconv.FormatInt(id, 10))
+	logf("[proxy] --proxy / config.json 的代理已加入代理池")
+}
+
+// dropSeededProxy 撤掉上一次由启动参数建的那条。
+// 只在这条记录**还是我们建时那个 URL** 时才删 —— 用户在面板上把它改成别的出口了，
+// 就说明他接管了这条记录，不该被启动参数的变更连坐删掉。
+func dropSeededProxy(prevURL string) {
+	idStr := kvGet(kvSeededProxyID)
+	if idStr == "" || prevURL == "" {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		return
+	}
+	proxyMu.RLock()
+	var found *Proxy
+	for i := range proxyCache {
+		if proxyCache[i].ID == id {
+			p := proxyCache[i]
+			found = &p
+			break
+		}
+	}
+	proxyMu.RUnlock()
+	if found == nil || found.URL != prevURL {
+		return
+	}
+	if err := proxyDelete(id); err != nil {
+		logf("[proxy] 撤下旧的启动参数代理失败: %v", err)
+	}
+}
+
+// poolHasProxyURL 池子里有没有这个 URL。
+func poolHasProxyURL(url string) bool {
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	for _, p := range proxyCache {
+		if p.URL == url {
+			return true
+		}
+	}
+	return false
 }
 
 // pickProxyWithCapacity 找一个可用（enabled + 没熔断或已过冷却）且限流没满的代理。

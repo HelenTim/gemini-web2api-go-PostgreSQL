@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -112,6 +113,13 @@ func accountCount() (int, int) {
 	return total, enabled
 }
 
+// kv 里记迁移/播种状态的键。
+const (
+	kvLegacyCookieDone = "legacy_single_cookie_migrated"
+	kvSeededCookieID   = "seeded_cookie_id"
+	kvSeededCookieVal  = "seeded_cookie_value"
+)
+
 // seedCookiesFromConfig 把启动参数和历史遗留的单 cookie 并进 cookie 池。
 //
 // cookie 原来也有两个入口：cookie 池，和「设置」页那个池空时才用的单 cookie 输入
@@ -119,62 +127,137 @@ func accountCount() (int, int) {
 // 单 cookie 路径返回的账号 ID 是 0，而 markAccountResult 开头就是 id<=0 直接返回，
 // 于是**健康度一个字都不写**：fail_count 恒为 0、last_ok_at 恒为空，也没有轮转。
 //
-//   - kv 里的 google_cookie：一次性迁入并抹掉（不抹的话用户从池子里删掉，
-//     重启又会冒出来）
-//   - cfg.CookieFile（--cookie-file）：每次启动重读文件并按内容去重 upsert，
-//     所以改文件重启即生效
+//   - kv 里的 google_cookie：一次性迁入，用独立标记记"迁过了"，原值不动
+//   - cfg.CookieFile（--cookie-file）：声明式跟随，内容变了替换同一条记录
 func seedCookiesFromConfig() {
-	if v := strings.TrimSpace(takeLegacyCookie()); v != "" {
-		if adoptCookie(v, "原单 cookie") {
-			logf("[cookie] 「设置」页的单 cookie 已迁入 cookie 池，该输入框已移除")
-		}
+	migrateLegacyCookie()
+	syncSeededCookieFile()
+}
+
+// migrateLegacyCookie 一次性把 kv 里遗留的单 cookie 搬进池子。
+// 跟静态代理同样两条保命规则：入池成功才标记完成（accountAdd 要求含 SAPISID，
+// 而旧路径不要求，可能拒收），以及不去动 kv 里原来的值（回滚到旧版仍可用）。
+func migrateLegacyCookie() {
+	if kvGet(kvLegacyCookieDone) == "1" {
+		return
 	}
+	raw := strings.TrimSpace(kvGet("google_cookie"))
+	if raw == "" {
+		_ = kvSet(kvLegacyCookieDone, "1")
+		return
+	}
+	cookie, ok := normalizeCookie(raw, "「设置」页的单 cookie")
+	if !ok {
+		return
+	}
+	if !poolHasCookie(cookie) {
+		if _, err := accountAdd("原单 cookie", cookie, "从「设置」页迁入"); err != nil {
+			logf("[cookie] 「设置」页的单 cookie 迁入池子失败，原值保留、下次启动重试: %v", err)
+			return
+		}
+		logf("[cookie] 「设置」页的单 cookie 已迁入 cookie 池")
+	}
+	_ = kvSet(kvLegacyCookieDone, "1")
+}
+
+// syncSeededCookieFile 让池子里跟着 --cookie-file 走一条记录。
+//
+// 跟 --proxy 同一套：文件内容变了就撤下旧的那条再建新的，而不是又加一条。
+// 按内容去重挡不住这个 —— 定期轮换 cookie.txt 的部署会一次次往池子里堆死 cookie，
+// 而它们仍然 enabled，仍然参与轮转，于是每 N 个请求就有一个注定失败。
+// 内容没变时完全不碰池子，面板上的增删改停用都以面板为准。
+func syncSeededCookieFile() {
+	var cur string
 	if cfg.CookieFile != "" {
 		data, err := os.ReadFile(cfg.CookieFile)
 		if err != nil {
-			logf("[cookie] 读不了 --cookie-file %s: %v", cfg.CookieFile, err)
-		} else if v := strings.TrimSpace(string(data)); v != "" {
-			if adoptCookie(v, "cookie-file") {
-				logf("[cookie] --cookie-file 的 cookie 已加入 cookie 池")
-			}
+			// 读不到就当没配过：宁可保持现状，也不能因为容器少挂一个卷
+			// 就把用户在用的 cookie 撤下来。
+			logf("[cookie] 读不了 --cookie-file %s，池子保持不变: %v", cfg.CookieFile, err)
+			return
+		}
+		cur = strings.TrimSpace(string(data))
+	}
+	if cur != "" {
+		if c, ok := normalizeCookie(cur, "--cookie-file"); ok {
+			cur = c
+		} else {
+			return
 		}
 	}
+
+	prev := kvGet(kvSeededCookieVal)
+	if cur == prev {
+		return
+	}
+	dropSeededCookie(prev)
+	if cur == "" {
+		_ = kvSet(kvSeededCookieVal, "")
+		_ = kvSet(kvSeededCookieID, "")
+		logf("[cookie] --cookie-file 已移除，对应的池子记录一并撤下")
+		return
+	}
+	if poolHasCookie(cur) {
+		_ = kvSet(kvSeededCookieVal, cur)
+		_ = kvSet(kvSeededCookieID, "")
+		return
+	}
+	id, err := accountAdd("cookie-file", cur, "来自 --cookie-file")
+	if err != nil {
+		logf("[cookie] --cookie-file 入池失败: %v", err)
+		return
+	}
+	_ = kvSet(kvSeededCookieVal, cur)
+	_ = kvSet(kvSeededCookieID, strconv.FormatInt(id, 10))
+	logf("[cookie] --cookie-file 的 cookie 已加入 cookie 池")
 }
 
-// adoptCookie 按 cookie 内容去重地放进池子，返回是否真的新建了。
-// 单 cookie 那条路以前吃两种格式，这里一并归一化成池子要的裸 cookie 串。
-func adoptCookie(raw, label string) bool {
-	cookie := raw
-	if strings.HasPrefix(raw, "{") {
-		var obj struct {
-			Cookie string `json:"cookie"`
-		}
-		if err := json.Unmarshal([]byte(raw), &obj); err != nil || obj.Cookie == "" {
-			logf("[cookie] %s 是 JSON 但取不出 cookie 字段，跳过", label)
-			return false
-		}
-		cookie = obj.Cookie
+// dropSeededCookie 撤掉上一次由 --cookie-file 建的那条。
+// 只在内容还是我们写进去的那份时才删——用户在面板改过就说明他接管了。
+func dropSeededCookie(prevCookie string) {
+	idStr := kvGet(kvSeededCookieID)
+	if idStr == "" || prevCookie == "" {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		return
 	}
 	for _, a := range accountList() {
-		if a.Cookie == cookie {
-			return false
+		if a.ID == id {
+			if a.Cookie == prevCookie {
+				if err := accountDelete(id); err != nil {
+					logf("[cookie] 撤下旧的 --cookie-file 记录失败: %v", err)
+				}
+			}
+			return
 		}
 	}
-	if _, err := accountAdd(label, cookie, "启动时自动导入"); err != nil {
-		logf("[cookie] %s 入池失败: %v", label, err)
-		return false
-	}
-	return true
 }
 
-// takeLegacyCookie 取出 kv 里遗留的单 cookie 并抹掉。
-func takeLegacyCookie() string {
-	v := strings.TrimSpace(kvGet("google_cookie"))
-	if v == "" {
-		return ""
+// normalizeCookie 把旧单 cookie 路径吃的两种格式归一化成池子要的裸 cookie 串。
+// 不归一化的话池子里会存进一整段 JSON，SAPISID 提取和后续请求全错。
+func normalizeCookie(raw, who string) (string, bool) {
+	if !strings.HasPrefix(raw, "{") {
+		return raw, true
 	}
-	_ = kvSet("google_cookie", "")
-	return v
+	var obj struct {
+		Cookie string `json:"cookie"`
+	}
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil || obj.Cookie == "" {
+		logf("[cookie] %s 是 JSON 但取不出 cookie 字段，跳过", who)
+		return "", false
+	}
+	return strings.TrimSpace(obj.Cookie), true
+}
+
+func poolHasCookie(cookie string) bool {
+	for _, a := range accountList() {
+		if a.Cookie == cookie {
+			return true
+		}
+	}
+	return false
 }
 
 // pickCookieAccount 从池里挑一个 enabled 账号，按 last_used_at 最久优先，
