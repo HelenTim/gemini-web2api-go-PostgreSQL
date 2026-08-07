@@ -354,17 +354,40 @@ func poolHasCookie(cookie string) bool {
 // pickCookieAccount 从池里挑一个 enabled 账号，按 last_used_at 最久优先，
 // 挑中后立刻把 last_used_at 记为现在（下次轮到别人）。池空返回 (nil,false)。
 func pickCookieAccount() (*CookieAccount, bool) {
-	var a CookieAccount
-	err := getDB().QueryRow(
+	return pickCookieAccountExcept(nil)
+}
+
+// pickCookieAccountExcept 同上，但跳过本次已经试过的账号。
+//
+// 存在的理由：一个 cookie 失效不该让整个请求失败。池子里 2 个号坏 1 个，
+// 轮转会让大约一半请求撞上坏号 —— 表现就是"成功率莫名其妙很低"，而每次失败
+// 看起来都像是上游的问题。
+func pickCookieAccountExcept(skip map[int64]bool) (*CookieAccount, bool) {
+	// 健康的排前面，同样健康的按最久未用轮转。
+	//
+	// 不这么排的话坏号会跟好号平起平坐地轮到，而挑到坏号时它没有绑定的出口，
+	// 出口就按"无偏好"选了；等换号换到好号，出口已经定死 —— 于是好号的出口
+	// 粘性被坏号带偏。实测 1 好 2 坏时出口在两个代理间对半分。
+	rows, err := getDB().Query(
 		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count, proxy_id
-		 FROM accounts WHERE status='enabled' ORDER BY last_used_at ASC, id ASC LIMIT 1`).
-		Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
-			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount, &a.ProxyID)
+		 FROM accounts WHERE status='enabled' ORDER BY fail_count ASC, last_used_at ASC, id ASC`)
 	if err != nil {
 		return nil, false
 	}
-	_, _ = getDB().Exec(`UPDATE accounts SET last_used_at=? WHERE id=?`, time.Now().Unix(), a.ID)
-	return &a, true
+	defer rows.Close()
+	for rows.Next() {
+		var a CookieAccount
+		if err := rows.Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
+			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount, &a.ProxyID); err != nil {
+			continue
+		}
+		if skip[a.ID] {
+			continue
+		}
+		_, _ = getDB().Exec(`UPDATE accounts SET last_used_at=? WHERE id=?`, time.Now().Unix(), a.ID)
+		return &a, true
+	}
+	return nil, false
 }
 
 // markCookieByStatus 按上游返回回写 cookie 健康度。
@@ -473,4 +496,12 @@ func bindAccountProxy(accountID, proxyID int64) {
 		return
 	}
 	_, _ = getDB().Exec(`UPDATE accounts SET proxy_id=? WHERE id=?`, proxyID, accountID)
+}
+
+// accountDisplayName 面板/记录里显示的账号名，没填标签就用 #id。
+func accountDisplayName(a *CookieAccount) string {
+	if a.Label != "" {
+		return a.Label
+	}
+	return fmt.Sprintf("#%d", a.ID)
 }

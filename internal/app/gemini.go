@@ -172,6 +172,10 @@ func acquireSlot(preferProxyID int64) (Proxy, bool, error) {
 	}
 }
 
+// 一个请求最多试几个 cookie。池子大时挨个试到底会让失败请求拖很久，
+// 而连试 3 个都不行基本说明是池子整体的问题，不是撞上个别坏号。
+const maxCookieTries = 3
+
 // releaseSlot 释放占用。proxyID=0 表示直连。
 func releaseSlot(proxyID int64) {
 	slotRelease(proxyID)
@@ -237,7 +241,19 @@ func streamGenerate(prompt string, mc ModelConfig,
 		return nil, err
 	}
 
-	cookieStr, sapisid, cookieID, cookieLabel, preferProxy := loadCookie()
+	// 先挑号，再按它上次绑的出口挑代理 —— 同一个账号要尽量固定从同一个 IP 出去，
+	// 否则一个号在几十个出口之间跳，在 Google 眼里就是账号共享的特征。
+	//
+	// 挑号排在 acquireSlot 之前不违反「取 XSRF 必须走正式出口」：挑号只读库、
+	// 不发请求，真正发请求的是下面的 getXSRF，它在拿到 slot 之后。
+	var acct *CookieAccount
+	if a, ok := pickCookieAccount(); ok {
+		acct = a
+	}
+	preferProxy := int64(0)
+	if acct != nil {
+		preferProxy = acct.ProxyID
+	}
 
 	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
 	// 匿名请求不需要，getXSRF 对空 cookie 返回空串。见 xsrf.go。
@@ -253,6 +269,8 @@ func streamGenerate(prompt string, mc ModelConfig,
 	// 出错时也要把「用了哪个号 / 哪个出口」带回去，否则失败记录里全是空白。
 	// picked 是拿到 slot 之后才填的，闭包捕获它，后面每次 attrib 都带上当时的出口。
 	var picked Proxy
+	var cookieID int64
+	var cookieLabel string
 	attrib := func(err error) (*StreamResult, error) {
 		return &StreamResult{
 			AccountID: cookieID, AccountLabel: cookieLabel,
@@ -266,10 +284,6 @@ func streamGenerate(prompt string, mc ModelConfig,
 		return attrib(slotErr)
 	}
 	picked = p
-	// 记住这次用的出口，下次这个账号优先复用同一个
-	if picked.ID != preferProxy {
-		bindAccountProxy(cookieID, picked.ID)
-	}
 	defer releaseSlot(picked.ID) // picked.ID=0 表示直连 slot
 
 	// picked.URL 为空 = 直连 slot。代理只有代理池一个入口，没有别的兜底出口了
@@ -285,21 +299,50 @@ func streamGenerate(prompt string, mc ModelConfig,
 		currentBL(proxyURL), reqid,
 	)
 
-	// 取 XSRF token 要走跟正式请求同一个出口，否则 token 和请求来自两个 IP。
-	xsrfToken, xerr := getXSRF(cookieStr, proxyURL)
-	if xerr != nil {
-		// 取不到 SNlM0e 基本等于 cookie 已失效（页面把我们当匿名用户了），
-		// 记一次失败，让面板上能看出是哪个号该换了。
-		markCookieByStatus(cookieID, 401, xerr.Error())
+	// 取 XSRF token。一个 cookie 失效不该让整个请求失败：当前号取不到就换下一个，
+	// 最多试 maxCookieTries 个。不这么做的话，池子里 2 个号坏 1 个就会让大约一半
+	// 请求挂掉，而每次失败看起来都像上游的问题，用户只会觉得"成功率莫名很低"。
+	//
+	// 换号**不换出口**：出口已经按第一个号的绑定选定了，同一个请求里再换出口没道理。
+	cookieStr, sapisid, xsrfToken := "", "", ""
+	var lastCookieErr error
+	tried := map[int64]bool{}
+	for acct != nil && len(tried) < maxCookieTries {
+		tried[acct.ID] = true
+		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
+		cookieID, cookieLabel = acct.ID, accountDisplayName(acct)
+		tok, err := getXSRF(acct.Cookie, proxyURL)
+		if err == nil {
+			cookieStr, sapisid, xsrfToken = acct.Cookie, extractSAPISID(acct.Cookie), tok
+			// 只在「还没绑过」或「绑的出口已经没了」时写绑定。
+			//
+			// 绝不因为"这次走的是别的出口"就覆盖：出口是按**本次第一个挑中的号**
+			// 的绑定选的，而挑号会换（新加的号 last_used_at=0 排在最前，撞上坏号
+			// 就会换）。拿别人的出口覆盖当前号的绑定，等于每次撞上坏号就把好号的
+			// 粘性打散一次 —— 实测就是这么散掉的。
+			if acct.ProxyID == 0 || !proxyUsableByID(acct.ProxyID) {
+				bindAccountProxy(acct.ID, picked.ID)
+			}
+			break
+		}
+		// 取不到 SNlM0e 基本等于这个 cookie 已失效（页面把我们当匿名用户了），
+		// 记一次失败让面板上看得出是哪个号该换了，然后换下一个。
+		markCookieByStatus(acct.ID, 401, err.Error())
+		lastCookieErr = err
+		logf("[cookie] 账号 #%d 不可用，换下一个：%v", acct.ID, err)
+		acct, _ = pickCookieAccountExcept(tried) // 取不到时返回 nil，循环自然结束
+	}
+	if lastCookieErr != nil && cookieStr == "" {
 		if !rtCfg().FallbackAnon {
 			// 默认报错而不是降级：cookie 失效后上游不会拒绝，只是把你当匿名用户，
 			// 纯文本请求照样 200 —— 于是 3.1 Pro 被静默降级成 3.5 Flash-Lite、
 			// 思考链消失，客户端完全看不出来。宁可明确失败也不给假的成功。
-			return attrib(fmt.Errorf("cookie 无法使用：%w", xerr))
+			return attrib(fmt.Errorf("cookie 池里 %d 个账号都不可用（最后一个：%w）；"+
+				"到面板「Cookie 池」用「检测」按钮逐个排查，或打开 fallback_anon 降级匿名",
+				len(tried), lastCookieErr))
 		}
-		logf("[cookie] 账号 %d 取 XSRF 失败，本次降级匿名（能力会退化到匿名档）：%v", cookieID, xerr)
-		cookieStr, sapisid, cookieID = "", "", 0
-		xsrfToken = ""
+		logf("[cookie] 试过的 %d 个账号都不可用，本次降级匿名（能力会退化到匿名档）", len(tried))
+		cookieID, cookieLabel = 0, ""
 	}
 	body := buildBody(xsrfToken)
 
@@ -752,7 +795,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 
 	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关。
 	// 但 at 必须带——否则挂了 cookie 之后连通性探测会一直报 400，假报故障。
-	cookieStr, sapisid, _, _, _ := loadCookie()
+	cookieStr, sapisid := loadCookie()
 	if tok, e := getXSRF(cookieStr, proxyURL); e == nil && tok != "" {
 		form.Set("at", tok)
 		body = form.Encode()
