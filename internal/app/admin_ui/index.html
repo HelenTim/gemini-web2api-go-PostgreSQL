@@ -895,7 +895,7 @@ const RT_GROUPS = [
       { k: 'default_model', label: '默认模型', type: 'select',
         hint: '客户端没传 model 时用哪个' },
       { k: 'max_prompt_tokens', label: 'Prompt token 上限', type: 'int', min: 0, max: 200000,
-        hint: '超了从最旧的历史开始丢，保住最新提问。上游单请求约 2 万 token 封顶且从尾部静默截断，不管的话被吃掉的正是刚问的那句。0=不限' },
+        hint: '超了直接返回 400 context_length_exceeded。上游单请求约 2 万 token 封顶且从尾部静默截断，不拦的话被吃掉的正是刚问的那句，客户端还以为成功了。0=不限' },
       { k: 'impersonate', label: 'TLS 指纹', type: 'text',
         hint: 'chrome_146 / chrome_144 / firefox_147 / safari_16_0 …' },
       { k: 'gemini_bl', label: 'Gemini bl 版本', type: 'text',
