@@ -505,3 +505,58 @@ func accountDisplayName(a *CookieAccount) string {
 	}
 	return fmt.Sprintf("#%d", a.ID)
 }
+
+// mergeSetCookie 把响应下发的 Set-Cookie 合并进现有 cookie 串。
+//
+// 服务端几乎每个响应都在刷新 SIDCC / __Secure-1PSIDCC / __Secure-3PSIDCC
+// （2 小时抓包里 batchexecute 就刷了 468 次），浏览器收下再带回去。一直发旧值的
+// 客户端会被判定为过期会话 —— 实测不合并的号活一两小时就失效。
+//
+// 顺序保持原样、新键追加在后：cookie 顺序本身不影响语义，但保持稳定能让
+// poolHasCookie 那类按内容比对的地方不至于每次都认成新值。
+func mergeSetCookie(cookie string, setCookie []string) string {
+	if len(setCookie) == 0 {
+		return cookie
+	}
+	updates := map[string]string{}
+	for _, sc := range setCookie {
+		first := strings.TrimSpace(strings.SplitN(sc, ";", 2)[0])
+		i := strings.Index(first, "=")
+		if i <= 0 {
+			continue
+		}
+		name, val := first[:i], first[i+1:]
+		// 删除指令（过期时间在过去 + 空值）不能当成新值写进去
+		if val == "" && strings.Contains(strings.ToLower(sc), "expires=thu, 01 jan 1970") {
+			continue
+		}
+		updates[name] = val
+	}
+	if len(updates) == 0 {
+		return cookie
+	}
+	var parts []string
+	seen := map[string]bool{}
+	for _, kv := range splitCookiePairs(cookie) {
+		seen[kv[0]] = true
+		if v, ok := updates[kv[0]]; ok {
+			parts = append(parts, kv[0]+"="+v)
+			continue
+		}
+		parts = append(parts, kv[0]+"="+kv[1])
+	}
+	for name, val := range updates {
+		if !seen[name] {
+			parts = append(parts, name+"="+val)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+// updateAccountCookie 把刷新后的 cookie 写回账号。
+func updateAccountCookie(id int64, cookie string) {
+	if id <= 0 || cookie == "" {
+		return
+	}
+	_, _ = getDB().Exec(`UPDATE accounts SET cookie=? WHERE id=?`, cookie, id)
+}

@@ -2,7 +2,10 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // 超长对话转文本附件。
@@ -82,7 +85,20 @@ func prepareContextFile(prompt, latest string, budget int, cookie, proxyURL stri
 	if err != nil {
 		return prompt, nil, false, fmt.Errorf("超长对话转附件失败: %w", err)
 	}
+	uploadSettleDelay()
 	logf("[context] prompt %d 字节超过 %d，已转成附件 %s", len(prompt), budget, contextFileName)
 	files := []fileRef{{Ref: ref, Name: contextFileName, Kind: 3, Mime: "text/plain"}}
 	return contextFilePrompt(latest, budget), files, true, nil
+}
+
+// uploadSettleDelay 上传完等一会儿再引用。
+//
+// 排查用的临时开关：怀疑服务端是异步摄取附件的 —— 浏览器里用户选完文件要过几秒
+// 才发送，而我们上传完毫秒级就引用，模型可能只看到已处理完的那一段。
+// 设 GW2A_UPLOAD_DELAY_MS 打开。
+func uploadSettleDelay() {
+	ms, _ := strconv.Atoi(os.Getenv("GW2A_UPLOAD_DELAY_MS"))
+	if ms > 0 {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
 }

@@ -453,7 +453,13 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 	}
 
 	for attempt := 0; attempt < rtCfg().RetryAttempts; attempt++ {
-		statusCode, raw, ttfb, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
+		statusCode, raw, ttfb, setCookie, err := doGeminiRequest(endpoint, body, geminiHeaders, proxyURL, lineCB)
+		if len(setCookie) > 0 && cookieID > 0 {
+			if merged := mergeSetCookie(cookieStr, setCookie); merged != cookieStr {
+				cookieStr = merged
+				updateAccountCookie(cookieID, merged)
+			}
+		}
 		if err != nil {
 			lastErr = err
 			if pickedOK {
@@ -581,14 +587,17 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 
 // doGeminiRequest 发一次请求到 endpoint。proxyURL 非空走 stdlib（支持 socks5/http），
 // 空走 tls-client（chrome146 真指纹）。返回 (HTTP status, body bytes, err)。
+// 返回值多了 setCookie：服务端几乎每个响应都在刷新 SIDCC / __Secure-1PSIDCC /
+// __Secure-3PSIDCC，浏览器收下再带回去。一直发旧值的客户端会被判定为过期会话，
+// 实测号活一两小时就失效 —— 所以这些必须收下来并写回账号。
 func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL string,
-	onLine func(string)) (int, []byte, int64, error) {
+	onLine func(string)) (int, []byte, int64, []string, error) {
 	sendAt := time.Now()
 	if proxyURL != "" {
 		// 走 stdlib 的 http.ProxyURL，已知能过 socks5/socks5h。
 		req, err := http.NewRequest("POST", endpoint, strings.NewReader(body))
 		if err != nil {
-			return 0, nil, 0, err
+			return 0, nil, 0, nil, err
 		}
 		applyChromeHeaders(req)
 		for k, v := range headers {
@@ -597,20 +606,20 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 		client := getStdlibClient(proxyURL)
 		resp, err := client.Do(req)
 		if err != nil {
-			return 0, nil, 0, err
+			return 0, nil, 0, nil, err
 		}
 		defer resp.Body.Close()
 		raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
 		if err != nil {
-			return resp.StatusCode, nil, ttfb, err
+			return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
 		}
-		return resp.StatusCode, raw, ttfb, nil
+		return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
 	}
 
 	// 直连 → tls-client，保留 chrome146 TLS/HTTP2 真指纹
 	req, err := fhttp.NewRequest("POST", endpoint, strings.NewReader(body))
 	if err != nil {
-		return 0, nil, 0, err
+		return 0, nil, 0, nil, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -618,14 +627,14 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 	client := getTLSClient()
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, 0, err
+		return 0, nil, 0, nil, err
 	}
 	defer resp.Body.Close()
 	raw, ttfb, err := readBody(resp.Body, onLine, sendAt)
 	if err != nil {
-		return resp.StatusCode, nil, ttfb, err
+		return resp.StatusCode, nil, ttfb, resp.Header.Values("Set-Cookie"), err
 	}
-	return resp.StatusCode, raw, ttfb, nil
+	return resp.StatusCode, raw, ttfb, resp.Header.Values("Set-Cookie"), nil
 }
 
 // readBody 读完整个响应体并原样返回；onLine 非 nil 时每读到一行就回调一次，
