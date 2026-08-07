@@ -491,10 +491,75 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Responses API 这条路目前不做真流式，两个回调都传 nil
-	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, nil, nil)
+	stream, _ := req["stream"].(bool)
+	rid := "resp_" + randHex(16)
+	mid := "msg_" + randHex(12)
+
+	// 流式要先把头和 response.created 发出去，才能边收边推 delta。
+	// 代价是一旦开了流 HTTP 状态码就改不了了，上游失败只能用 response.failed
+	// 事件告知 —— 跟 /v1/chat/completions 那条路的取舍一致。
+	var writeEvent func(string, interface{})
+	var emitDelta func(string)
+	var gate *toolFenceGate
+	var onDelta func(string)
+	if stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.WriteHeader(200)
+		flusher, _ := w.(http.Flusher)
+		writeEvent = func(eventType string, payload interface{}) {
+			pj, _ := json.Marshal(payload)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, pj)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		writeEvent("response.created", map[string]interface{}{
+			"type": "response.created",
+			"response": map[string]interface{}{
+				"id":     rid,
+				"object": "response",
+				"status": "in_progress",
+				"model":  modelName,
+				"output": []interface{}{},
+			},
+		})
+		emitDelta = func(d string) {
+			writeEvent("response.output_text.delta", map[string]interface{}{
+				"type":          "response.output_text.delta",
+				"item_id":       mid,
+				"content_index": 0,
+				"delta":         d,
+			})
+		}
+		// 跟 chat 那条路同一套围栏闸门：带 tools 时只放行确定不在围栏里的部分。
+		if len(tools) == 0 {
+			onDelta = emitDelta
+		} else {
+			gate = newToolFenceGate(emitDelta)
+			onDelta = gate.Push
+		}
+	}
+
+	// onReasoning 传 nil：Responses API 有自己的 reasoning 事件形状，跟 chat 的
+	// reasoning_content 不通用，这条路目前不暴露思考链。
+	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta, nil)
 	if err != nil {
-		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), false)
+		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), stream)
+		if stream {
+			writeEvent("response.failed", map[string]interface{}{
+				"type": "response.failed",
+				"response": map[string]interface{}{
+					"id":     rid,
+					"object": "response",
+					"status": "failed",
+					"model":  modelName,
+					"error":  map[string]string{"message": err.Error()},
+				},
+			})
+			return
+		}
 		if rle, ok := err.(*RateLimitError); ok {
 			writeJSON(w, 429, map[string]interface{}{"error": map[string]string{
 				"message": rle.Error(),
@@ -507,8 +572,6 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rid := "resp_" + randHex(16)
-	mid := "msg_" + randHex(12)
 	var output []map[string]interface{}
 	for _, tc := range toolCalls {
 		output = append(output, map[string]interface{}{
@@ -534,31 +597,12 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	stream, _ := req["stream"].(bool)
 	recordRequest("responses", modelName, prompt, text, res, 200, "", stream)
 	if stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.WriteHeader(200)
-		flusher, _ := w.(http.Flusher)
-		writeEvent := func(eventType string, payload interface{}) {
-			pj, _ := json.Marshal(payload)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, pj)
-			if flusher != nil {
-				flusher.Flush()
-			}
+		// 补上闸门扣住、或前缀 diff 跳过的尾巴，再发终态事件。
+		if rest := remainingOf(text, sentText(res, gate)); rest != "" {
+			emitDelta(rest)
 		}
-		writeEvent("response.created", map[string]interface{}{
-			"type": "response.created",
-			"response": map[string]interface{}{
-				"id":     rid,
-				"object": "response",
-				"status": "in_progress",
-				"model":  modelName,
-				"output": []interface{}{},
-			},
-		})
 		for _, item := range output {
 			switch item["type"] {
 			case "function_call":
