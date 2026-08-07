@@ -282,7 +282,9 @@ What's left is only what requires restarting the process:
 | Database path | `volumes` + `command: --db` |
 | `ADMIN_TOKEN` | `environment`, the panel login token |
 
-There are two optional **lock switches** for deployments that must not be changed at runtime: the `API_KEY` environment variable pins the API key (the panel can't change it), and the file behind `--cookie-file` acts as a fallback when no cookie is stored in the panel. Without them, both default to the panel.
+The `API_KEY` environment variable pins the API key (the panel can't change it), for deployments that must not be changed at runtime.
+
+`--proxy` and `--cookie-file` are **seed parameters, not a second configuration layer**: at startup their values are imported into the proxy pool / cookie pool (deduplicated by URL and by cookie contents), and everything is managed from the panel afterwards. Change them and restart to take effect.
 
 Command-line flags still work and are meant as temporary overrides during local debugging. Precedence: **panel changes > CLI flags / `config.json` > built-in defaults**.
 
@@ -297,8 +299,8 @@ All flags:
 | `--db` | SQLite path, default `./data/gemini.db` |
 | `--admin-token` | panel login token; empty = no auth (only acceptable when bound to 127.0.0.1) |
 | `--api-key` | pins the `/v1/*` key so the panel can't change it, same as the `API_KEY` env var |
-| `--cookie-file` | fallback cookie file used when the panel has none |
-| `--proxy` | static proxy used when the proxy pool is empty |
+| `--cookie-file` | imports the cookie in this file into the cookie pool at startup |
+| `--proxy` | imports this proxy into the proxy pool at startup |
 | `--impersonate` | TLS fingerprint profile |
 | `--version` | print version and exit (this is what the Docker healthcheck runs) |
 
@@ -313,7 +315,7 @@ A signed-in session unlocks image generation (Nano Banana 2), music (Lyria 3), v
 1. Sign in to [gemini.google.com](https://gemini.google.com)
 2. DevTools (F12) → Application → Cookies → `https://gemini.google.com`
 3. Copy: `SID` / `HSID` / `SSID` / `APISID` / `SAPISID` / `__Secure-1PSID`
-4. Paste it into the panel under Settings → Google Cookie (effective on save), or write it to `cookie.txt` and start with `--cookie-file cookie.txt` (the panel wins if both are set):
+4. Add it in the panel under Cookie pool → Add account, or write it to `cookie.txt` and start with `--cookie-file cookie.txt` (imported into the pool at startup, managed from the panel afterwards):
 ```
 SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 ```
@@ -366,7 +368,7 @@ Supported proxy schemes:
 - 5 failures trip the circuit breaker (resettable from the panel)
 - All proxies full → HTTP 429 (no Google quota consumed; retry once a slot frees up)
 
-**Environment variables `HTTPS_PROXY` / `ALL_PROXY` are ignored.** Proxies come only from the pool or the static proxy setting (`--proxy` / `config.json`). Otherwise a stray `export` on the host would silently change the exit IP while the panel still showed a direct connection, which makes troubleshooting misleading.
+**Environment variables `HTTPS_PROXY` / `ALL_PROXY` are ignored.** Proxies come only from the proxy pool (`--proxy` / `config.json` merely seed the pool at startup). Otherwise a stray `export` on the host would silently change the exit IP while the panel still showed a direct connection, which makes troubleshooting misleading.
 
 ## Fingerprint simulation
 

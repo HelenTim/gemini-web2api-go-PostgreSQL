@@ -271,7 +271,6 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 | 明细保留天数 | 过期只删明细，聚合数据永久保留 |
 | TLS 指纹 | `chrome_146`（默认）/ `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0` |
 | Gemini `bl` 版本 | 上游前端版本号，过期时改这里 |
-| 静态代理 | 代理池为空时的兜底；一般用「代理池」页面配 |
 | 打印请求日志 | |
 
 所有值都在后端做范围校验（比如 `retry_attempts` 只接受 1-10、超时 5-600 秒），
@@ -296,9 +295,10 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 | 数据库路径 | `volumes` + `command: --db` |
 | `ADMIN_TOKEN` | `environment`，面板登录 token |
 
-另有两个**可选的锁定开关**，用于不希望运行时被改的部署：`API_KEY` 环境变量会
-锁死 API key（面板改不了）、`--cookie-file` 指向的文件在面板没存 cookie 时作为
-兜底。不设的话默认路径都是面板。
+`API_KEY` 环境变量会锁死 API key（面板改不了），用于不希望运行时被改的部署。
+
+`--proxy` 和 `--cookie-file` 是**播种参数**，不是第二套配置：启动时把值导入代理池 /
+Cookie 池（按 URL、cookie 内容去重），之后一律从面板管理。改了重启即生效。
 
 命令行参数仍然可用，定位是本地调试时的临时覆盖。优先级：
 **面板改动 > CLI flag / `config.json` > 内置默认**。
@@ -317,8 +317,8 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 | `--db` | SQLite 路径，默认 `./data/gemini.db` |
 | `--admin-token` | 面板登录 token，留空 = 面板不鉴权（只有绑 127.0.0.1 才可接受） |
 | `--api-key` | 锁定 `/v1/*` 的 key（面板改不了），等价于 `API_KEY` 环境变量 |
-| `--cookie-file` | 面板没存 cookie 时的兜底文件 |
-| `--proxy` | 代理池为空时的静态代理 |
+| `--cookie-file` | 启动时把文件里的 cookie 导入 Cookie 池 |
+| `--proxy` | 启动时把这个代理导入代理池 |
 | `--impersonate` | TLS 指纹档位 |
 | `--version` | 打印版本退出（Docker healthcheck 用的就是它） |
 
@@ -337,8 +337,8 @@ token——抓包里三轮分别是 1404 / 1847 / 2489 字节，由浏览器 JS 
 1. 浏览器登录 [gemini.google.com](https://gemini.google.com)
 2. DevTools (F12) → Application → Cookies → `https://gemini.google.com`
 3. 复制：`SID` / `HSID` / `SSID` / `APISID` / `SAPISID` / `__Secure-1PSID`
-4. 粘进面板「设置 → Google Cookie」，保存即生效；或写成 `cookie.txt` 后启动加
-   `--cookie-file cookie.txt`（面板里存了就以面板为准）：
+4. 粘进面板「Cookie 池 → 添加账号」；或写成 `cookie.txt` 后启动加
+   `--cookie-file cookie.txt`（启动时导入池子，之后从面板管理）：
 ```
 SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 ```
@@ -346,8 +346,8 @@ SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...
 JSON 形式 `{"cookie": "SID=...; ...", "sapisid": "..."}` 也吃。带 `SAPISID` 的请求会自动
 算 `SAPISIDHASH` 授权头，所以这一项不能少。
 
-**多个账号用「Cookie 池」页**：每个请求按最久未用优先挑一个 enabled 账号，挑中即推进轮转，
-池空才回落到上面这个单 cookie。挂了任一路径 `gemini-3.1-pro` 就会出现在模型列表里。
+**cookie 只有「Cookie 池」这一个入口**：每个请求按最久未用优先挑一个 enabled 账号，
+挑中即推进轮转。池子里有 enabled 账号，`gemini-3.1-pro` 就会出现在模型列表里。
 
 账号的「失败次数 / 最近成功」会随请求自动更新。判据是**只把 401/403 算作 cookie 的错**：
 网络错误、代理失败、被 Google 拦（302）一律不计——住宅代理的出口退化率很高，把这些算
@@ -409,8 +409,8 @@ JSON 形式 `{"cookie": "SID=...; ...", "sapisid": "..."}` 也吃。带 `SAPISID
 - 失败 5 次自动熔断（管理面板可手动重置）
 - 全部代理满 → 返回 HTTP 429（不消耗 Google 配额，等空位再重试）
 
-**不读 `HTTPS_PROXY` / `ALL_PROXY` 环境变量。** 代理只从代理池或「设置」页的静态代理
-（`--proxy` / `config.json` 同义）里取——否则宿主机上一个随手 export 的变量会悄悄改变
+**不读 `HTTPS_PROXY` / `ALL_PROXY` 环境变量。** 代理只从代理池里取
+（`--proxy` / `config.json` 只是启动时往池子里播种）——否则宿主机上一个随手 export 的变量会悄悄改变
 出口 IP，而面板显示的还是直连，排查时会误判。
 
 ## 指纹模拟
