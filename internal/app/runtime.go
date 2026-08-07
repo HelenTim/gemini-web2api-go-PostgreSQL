@@ -26,6 +26,9 @@ type RuntimeConfig struct {
 	Impersonate     string `json:"impersonate"`
 	GeminiBL        string `json:"gemini_bl"`
 	Proxy           string `json:"proxy"`
+	// ProxyCooldownMin 是代理连续失败熔断后隔多久放回池子，单位分钟。
+	// 0 = 不恢复（熔断即永久除名，要手动重置）。默认按实测的封禁恢复时长取 120。
+	ProxyCooldownMin int `json:"proxy_cooldown_min"`
 }
 
 const runtimeConfigKey = "runtime_config"
@@ -51,6 +54,8 @@ func initRuntimeConfig() {
 		Impersonate:     cfg.Impersonate,
 		GeminiBL:        cfg.GeminiBL,
 		Proxy:           cfg.Proxy,
+
+		ProxyCooldownMin: cfg.ProxyCooldownMin,
 	}
 	if raw := kvGet(runtimeConfigKey); raw != "" {
 		saved := base
@@ -93,6 +98,7 @@ func validateRuntimeConfig(c RuntimeConfig) error {
 		{"per_ip_rpm", c.PerIPRPM, 0, 10000},
 		{"per_ip_rph", c.PerIPRPH, 0, 100000},
 		{"retention_days", c.RetentionDays, 1, 3650},
+		{"proxy_cooldown_min", c.ProxyCooldownMin, 0, 10080},
 	} {
 		if r.v < r.min || r.v > r.max {
 			return fmt.Errorf("%s=%d 超出允许范围 [%d, %d]", r.name, r.v, r.min, r.max)

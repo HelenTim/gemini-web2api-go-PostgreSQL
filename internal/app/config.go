@@ -28,6 +28,9 @@ type Config struct {
 	PerIPConcurrent int `json:"per_ip_concurrent"` // 瞬时并发上限
 	PerIPRPM        int `json:"per_ip_rpm"`        // 每分钟请求上限
 	PerIPRPH        int `json:"per_ip_rph"`        // 每小时请求上限
+
+	// 代理连续失败熔断后隔多久放回池子（分钟），0 = 不恢复。
+	ProxyCooldownMin int `json:"proxy_cooldown_min"`
 }
 
 var (
@@ -56,6 +59,8 @@ func defaultConfig() Config {
 		PerIPConcurrent: 5,
 		PerIPRPM:        30,
 		PerIPRPH:        80,
+		// 实测被拦的出口 106-121 分钟自动恢复，冷却取 120 分钟。
+		ProxyCooldownMin: 120,
 	}
 }
 

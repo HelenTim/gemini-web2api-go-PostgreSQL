@@ -65,8 +65,32 @@ func loadProxies() {
 	proxyMu.Unlock()
 }
 
-// pickProxyWithCapacity 找一个 enabled + fail<5 + 当前限流没满的代理。
-// 返回 (proxy, ok)。所有代理都满时返回 ok=false。
+// 连续失败到这个次数就把代理熔断，等冷却期过了再放回池子。
+const proxyFailThreshold = 5
+
+// proxyUsable 判断这条代理现在能不能用。
+//
+// 熔断不是永久除名：被 Google 拦掉的出口实测 106-121 分钟就自动恢复，而旧写法
+// 只认 fail_count<5，一旦超了就再也选不中，也就永远等不到一次成功把 fail_count
+// 清零 —— 只能去面板手动重置。冷却期从 last_used（也就是最后一次尝试）算起，
+// 放回去再失败一次就重新计时。
+//
+// cooldownMin<=0 表示关掉冷却，退回"熔断即永久除名"的旧行为。
+func proxyUsable(p Proxy, now int64, cooldownMin int) bool {
+	if !p.Enabled {
+		return false
+	}
+	if p.FailCount < proxyFailThreshold {
+		return true
+	}
+	if cooldownMin <= 0 {
+		return false
+	}
+	return now-p.LastUsed >= int64(cooldownMin)*60
+}
+
+// pickProxyWithCapacity 找一个可用（enabled + 没熔断或已过冷却）且限流没满的代理。
+// 返回 (proxy, ok)。所有代理都不可用或都满时返回 ok=false。
 //
 // 跟旧的 pickProxy 区别：会问 trySlotAcquire 看 slot 是否有容量；
 // 调用方拿到的 slot 必须配套调 slotRelease(proxy.ID)。
@@ -76,9 +100,11 @@ func pickProxyWithCapacity() (Proxy, bool) {
 	if len(proxyCache) == 0 {
 		return Proxy{}, false
 	}
+	now := time.Now().Unix()
+	cooldown := rtCfg().ProxyCooldownMin
 	var pool []Proxy
 	for _, p := range proxyCache {
-		if p.Enabled && p.FailCount < 5 {
+		if proxyUsable(p, now, cooldown) {
 			pool = append(pool, p)
 		}
 	}
