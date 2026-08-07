@@ -1,7 +1,9 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 )
@@ -108,6 +110,71 @@ func accountCount() (int, int) {
 	_ = getDB().QueryRow(`SELECT COUNT(*), SUM(CASE WHEN status='enabled' THEN 1 ELSE 0 END) FROM accounts`).
 		Scan(&total, &enabled)
 	return total, enabled
+}
+
+// seedCookiesFromConfig 把启动参数和历史遗留的单 cookie 并进 cookie 池。
+//
+// cookie 原来也有两个入口：cookie 池，和「设置」页那个池空时才用的单 cookie 输入
+// （值存 kv 的 google_cookie，或来自 --cookie-file）。跟静态代理同一个毛病 ——
+// 单 cookie 路径返回的账号 ID 是 0，而 markAccountResult 开头就是 id<=0 直接返回，
+// 于是**健康度一个字都不写**：fail_count 恒为 0、last_ok_at 恒为空，也没有轮转。
+//
+//   - kv 里的 google_cookie：一次性迁入并抹掉（不抹的话用户从池子里删掉，
+//     重启又会冒出来）
+//   - cfg.CookieFile（--cookie-file）：每次启动重读文件并按内容去重 upsert，
+//     所以改文件重启即生效
+func seedCookiesFromConfig() {
+	if v := strings.TrimSpace(takeLegacyCookie()); v != "" {
+		if adoptCookie(v, "原单 cookie") {
+			logf("[cookie] 「设置」页的单 cookie 已迁入 cookie 池，该输入框已移除")
+		}
+	}
+	if cfg.CookieFile != "" {
+		data, err := os.ReadFile(cfg.CookieFile)
+		if err != nil {
+			logf("[cookie] 读不了 --cookie-file %s: %v", cfg.CookieFile, err)
+		} else if v := strings.TrimSpace(string(data)); v != "" {
+			if adoptCookie(v, "cookie-file") {
+				logf("[cookie] --cookie-file 的 cookie 已加入 cookie 池")
+			}
+		}
+	}
+}
+
+// adoptCookie 按 cookie 内容去重地放进池子，返回是否真的新建了。
+// 单 cookie 那条路以前吃两种格式，这里一并归一化成池子要的裸 cookie 串。
+func adoptCookie(raw, label string) bool {
+	cookie := raw
+	if strings.HasPrefix(raw, "{") {
+		var obj struct {
+			Cookie string `json:"cookie"`
+		}
+		if err := json.Unmarshal([]byte(raw), &obj); err != nil || obj.Cookie == "" {
+			logf("[cookie] %s 是 JSON 但取不出 cookie 字段，跳过", label)
+			return false
+		}
+		cookie = obj.Cookie
+	}
+	for _, a := range accountList() {
+		if a.Cookie == cookie {
+			return false
+		}
+	}
+	if _, err := accountAdd(label, cookie, "启动时自动导入"); err != nil {
+		logf("[cookie] %s 入池失败: %v", label, err)
+		return false
+	}
+	return true
+}
+
+// takeLegacyCookie 取出 kv 里遗留的单 cookie 并抹掉。
+func takeLegacyCookie() string {
+	v := strings.TrimSpace(kvGet("google_cookie"))
+	if v == "" {
+		return ""
+	}
+	_ = kvSet("google_cookie", "")
+	return v
 }
 
 // pickCookieAccount 从池里挑一个 enabled 账号，按 last_used_at 最久优先，

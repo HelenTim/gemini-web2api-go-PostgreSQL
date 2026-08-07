@@ -43,14 +43,10 @@ var Models = map[string]ModelConfig{
 	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Most capable; needs a signed-in cookie (downgraded to Flash-Lite without one)"},
 }
 
-// hasCookie 表示是否配置了 Google 账号 cookie。
-// 先看 cookie 池里有没有 enabled 账号，再回落到旧的单 cookie（面板 kv 或
-// --cookie-file）——面板里加了账号要立刻反映出来。
+// hasCookie 表示 cookie 池里有没有可用账号。决定 3.1 Pro 是否出现在模型列表里。
 func hasCookie() bool {
-	if _, enabled := accountCount(); enabled > 0 {
-		return true
-	}
-	return currentCookieRaw() != ""
+	_, enabled := accountCount()
+	return enabled > 0
 }
 
 // availableModels 返回当前配置下值得暴露的模型。

@@ -75,9 +75,9 @@ func Run() {
 	// boot DB and load proxy pool
 	getDB()
 	initRuntimeConfig() // 面板改过的运行时配置盖在启动配置之上
-	initCookie()        // 面板存的 cookie 优先于 --cookie-file
 	loadProxies()
 	seedProxiesFromConfig() // --proxy / 遗留静态代理并进代理池
+	seedCookiesFromConfig() // --cookie-file / 遗留单 cookie 并进 cookie 池
 	resolvedAPIKey := initAPIKey(*apiKey)
 	initTokenizer()
 	startScheduler()
@@ -135,7 +135,6 @@ func Run() {
 		mux.HandleFunc("/admin/api/apikey", requireAuth(handleAdminAPIKey))
 		mux.HandleFunc("/admin/api/usage", requireAuth(handleAdminUsage))
 		mux.HandleFunc("/admin/api/config", requireAuth(handleAdminConfig))
-		mux.HandleFunc("/admin/api/cookie", requireAuth(handleAdminCookie))
 		mux.HandleFunc("/admin/api/cookies", requireAuth(handleAdminCookies))
 		mux.HandleFunc("/admin/api/cookies/", requireAuth(handleAdminCookieItem))
 		mux.HandleFunc("/admin/api/test", requireAuth(handleAdminTest))
@@ -150,13 +149,8 @@ func Run() {
 	}
 
 	cookieStatus := "none (anonymous)"
-	if hasCookie() {
-		cookieStatus = "yes"
-		if cfg.CookieFile != "" && kvGet("google_cookie") == "" {
-			cookieStatus += " (" + cfg.CookieFile + ")"
-		} else {
-			cookieStatus += " (admin panel)"
-		}
+	if total, enabled := accountCount(); enabled > 0 {
+		cookieStatus = fmt.Sprintf("%d/%d in pool", enabled, total)
 	}
 	proxyStatus := "none (direct)"
 	if n := len(listProxies()); n > 0 {

@@ -654,60 +654,6 @@ func modelNamesSorted() []string {
 	return names
 }
 
-// handleAdminCookie 读写 Google 账号 cookie。
-// GET 只返回状态摘要，**不回显完整值**——凭证没有必要再从服务端发回浏览器一次。
-func handleAdminCookie(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		raw := currentCookieRaw()
-		names := []string{}
-		for _, p := range strings.Split(raw, "; ") {
-			if i := strings.Index(p, "="); i > 0 {
-				names = append(names, p[:i])
-			}
-		}
-		key := []string{}
-		for _, want := range []string{"SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID"} {
-			for _, n := range names {
-				if n == want {
-					key = append(key, want)
-					break
-				}
-			}
-		}
-		writeJSON(w, 200, map[string]interface{}{
-			"configured":   raw != "",
-			"length":       len(raw),
-			"cookie_count": len(names),
-			"key_cookies":  key,
-			"from_file":    raw != "" && kvGet("google_cookie") == "",
-			"file_path":    cfg.CookieFile,
-		})
-	case http.MethodPut:
-		var body struct {
-			Cookie string `json:"cookie"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, 400, map[string]string{"error": "invalid JSON: " + err.Error()})
-			return
-		}
-		raw := strings.TrimSpace(body.Cookie)
-		if raw != "" && !strings.Contains(raw, "SAPISID") {
-			writeJSON(w, 400, map[string]string{
-				"error": "cookie 里没有 SAPISID，多半没复制全。需要 gemini.google.com 下的完整 cookie（至少含 SID / HSID / SSID / APISID / SAPISID / __Secure-1PSID）"})
-			return
-		}
-		if err := setCookie(raw); err != nil {
-			writeJSON(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		logf("[cookie] 已%s（面板）", map[bool]string{true: "保存", false: "清除"}[raw != ""])
-		writeJSON(w, 200, map[string]interface{}{"ok": true, "configured": raw != ""})
-	default:
-		writeJSON(w, 405, map[string]string{"error": "method not allowed"})
-	}
-}
-
 // classifyError 把 requests.error 归到几个可行动的类别。
 //
 // 分类的意义在于"看到之后该做什么不一样"：上游瞬时拒绝只能重试、代理层失败

@@ -720,28 +720,6 @@ const pages = {
           </div>
 
           <div class="card">
-            <h2>Google 账号 Cookie</h2>
-            <p class="lede">
-              挂上后请求走登录态，<code>gemini-3.1-pro</code> 才会出现在模型列表里。保存即生效。
-            </p>
-            <div id="cookieStatus" style="margin-bottom:10px;"></div>
-            <textarea id="cookieInput" rows="3" placeholder="SID=...; HSID=...; SAPISID=...; __Secure-1PSID=..."></textarea>
-            <div class="row" style="margin-top:10px;">
-              <button class="btn" onclick="saveCookie()">保存并生效</button>
-              <button class="btn danger" onclick="clearCookie()">清除</button>
-              <span id="cookieMsg" style="font-size:12.5px;"></span>
-            </div>
-            <details class="note" style="margin-top:10px; margin-bottom:0;">
-              <summary>怎么取 cookie</summary>
-              <div class="body">
-                浏览器登录 gemini.google.com → F12 → Application → Cookies →
-                选 <code>https://gemini.google.com</code> → 全选复制。已保存的值不会回显。
-                免费账号即便登录也会被降级到 Flash，只有付费订阅可能真路由到 Pro。
-              </div>
-            </details>
-          </div>
-
-          <div class="card">
             <h2>部署配置</h2>
             <p class="lede">
               改这些本来就要重启进程，所以放在 <code>docker-compose.yml</code> 里管，
@@ -990,68 +968,14 @@ async function loadRtCfg() {
   document.querySelector('#deployTable tbody').innerHTML = [
     ['监听', `${escapeHtml(d.host || '')}:${d.port}`, 'compose 的 ports + --port'],
     ['数据库', escapeHtml(d.db_path || ''), 'compose 的 volumes + --db'],
-    ['Cookie 文件', d.cookie_file ? escapeHtml(d.cookie_file) : '<span class="badge muted">未配置</span>',
-     'compose 挂载 + --cookie-file'],
+    ['Cookie 播种文件', d.cookie_file ? escapeHtml(d.cookie_file) : '<span class="badge muted">未配置</span>',
+     '启动时把文件内容导入 Cookie 池；之后从「Cookie 池」页面管理'],
     ['面板鉴权', d.admin_auth ? '<span class="badge ok">已开启</span>'
                              : '<span class="badge fail">未设 token</span>', 'compose 的 ADMIN_TOKEN'],
     ['API Key', d.api_key_locked ? '<span class="badge">部署锁定</span>'
                                  : '<span class="badge ok">面板可轮换</span>', 'compose 的 API_KEY'],
   ].map(r => `<tr><td title="${escapeHtml(r[2])}">${r[0]}</td>
       <td class="pre" style="word-break:break-all;">${r[1]}</td></tr>`).join('');
-}
-
-async function loadCookieStatus() {
-  const d = await api('/admin/api/cookie');
-  if (!d) return;
-  const box = document.getElementById('cookieStatus');
-  if (!box) return;
-  if (!d.configured) {
-    box.innerHTML = '<span class="badge muted">未配置</span>'
-      + ' <span style="color:var(--muted);font-size:12.5px">当前为匿名调用，模型列表里没有 gemini-3.1-pro</span>';
-    return;
-  }
-  const src = d.from_file ? ('文件 ' + escapeHtml(d.file_path || '')) : '面板';
-  box.innerHTML = '<span class="badge ok">已配置</span>'
-    + ` <span style="color:var(--muted);font-size:12.5px">来源：${src}，共 ${d.cookie_count} 个 cookie`
-    + `${(d.key_cookies || []).length ? '，关键项：' + d.key_cookies.map(escapeHtml).join(' / ') : ''}</span>`;
-}
-
-async function saveCookie() {
-  const msg = document.getElementById('cookieMsg');
-  const val = document.getElementById('cookieInput').value.trim();
-  if (!val) { msg.textContent = '请先粘贴 cookie'; msg.style.color = 'var(--fail)'; return; }
-  msg.textContent = '保存中…'; msg.style.color = 'var(--muted)';
-  const res = await fetch('/admin/api/cookie', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cookie: val }),
-  });
-  const d = await res.json().catch(() => ({}));
-  if (!res.ok) { msg.textContent = d.error || ('保存失败 ' + res.status); msg.style.color = 'var(--fail)'; return; }
-  document.getElementById('cookieInput').value = '';
-  msg.textContent = '已保存并生效'; msg.style.color = 'var(--ok)';
-  await loadCookieStatus();
-  await loadRtCfg();   // 模型列表会随之变化（3.1 Pro 出现）
-  setTimeout(() => { msg.textContent = ''; }, 3000);
-}
-
-async function clearCookie() {
-  const ok = await modalConfirm({
-    title: '清除 Cookie',
-    desc: '清除后回到匿名调用，gemini-3.1-pro 会从模型列表消失。',
-    confirmText: '清除',
-    danger: true,
-  });
-  if (!ok) return;
-  const msg = document.getElementById('cookieMsg');
-  const res = await fetch('/admin/api/cookie', {
-    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cookie: '' }),
-  });
-  if (!res.ok) { msg.textContent = '清除失败'; msg.style.color = 'var(--fail)'; return; }
-  msg.textContent = '已清除'; msg.style.color = 'var(--muted)';
-  await loadCookieStatus();
-  await loadRtCfg();
-  setTimeout(() => { msg.textContent = ''; }, 3000);
 }
 
 async function saveRtCfg() {
@@ -1521,7 +1445,6 @@ async function switchPage(name, force = false) {
   }
   if (name === 'settings') {
     await loadRtCfg();
-    await loadCookieStatus();
   }
 }
 
@@ -1603,7 +1526,7 @@ async function loadSideStat() {
   try {
     const [root, ck, usage] = await Promise.all([
       fetch('/').then(r => r.json()).catch(() => null),
-      api('/admin/api/cookie').catch(() => null),
+      api('/admin/api/cookies').catch(() => null),
       api('/admin/api/usage').catch(() => null),
     ]);
     const dot = document.getElementById('healthDot');
@@ -1613,7 +1536,7 @@ async function loadSideStat() {
     box.innerHTML = [
       ['版本', root ? 'v' + root.version : '—'],
       ['模型', root ? root.models.length + ' 个' : '—'],
-      ['Cookie', ck && ck.configured ? '已配置' : '匿名'],
+      ['Cookie', ck && ck.items && ck.items.length ? ck.items.length + ' 个' : '匿名'],
       ['IP slot', usage ? (usage.items || []).length + ' 个' : '—'],
     ].map(([k, v]) => `<div class="sf-row"><span>${k}</span><b>${v}</b></div>`).join('');
   } catch (e) { box.innerHTML = ''; }

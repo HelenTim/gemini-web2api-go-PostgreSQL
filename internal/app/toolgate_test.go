@@ -127,7 +127,7 @@ func TestPartialPrefixLen(t *testing.T) {
 		{"abc```", 3},
 		{"abc```tool_c", 9},
 		{"", 0},
-		{"中文`", 1},   // 切点必须落在 ASCII 上，不能劈开多字节字符
+		{"中文`", 1}, // 切点必须落在 ASCII 上，不能劈开多字节字符
 		{"中文", 0},
 	} {
 		if got := partialPrefixLen(c.s, m); got != c.want {

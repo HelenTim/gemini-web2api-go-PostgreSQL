@@ -19,7 +19,7 @@ func TestBLValueShape(t *testing.T) {
 
 	bad := []string{
 		"",
-		"boq_assistant-bard-web-server",                  // 缺版本段
+		"boq_assistant-bard-web-server", // 缺版本段
 		"boq_assistant-bard-web-server_2026080.16_p0",    // 日期 7 位
 		"boq_assistant-bard-web-server_20260805.163_p0",  // 小版本 3 位
 		"boq_assistant-bard-web-server_20260805.16_p",    // p 后面没数字

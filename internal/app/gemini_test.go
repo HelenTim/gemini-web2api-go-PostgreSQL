@@ -7,8 +7,7 @@ import (
 
 // 确认每个模型名解析出的 hex id 和 header 值正确。
 func TestModelHeader(t *testing.T) {
-	cookieRuntime.Store("SAPISID=dummy") // 让 3.1 Pro 可选，见 TestProHiddenWithoutCookie
-	defer cookieRuntime.Store("")
+	withPoolCookie(t) // 让 3.1 Pro 可选，见 TestProHiddenWithoutCookie
 
 	cases := []struct{ name, wantHex string }{
 		{"gemini-3.6-flash", hexFlash36},
@@ -231,7 +230,7 @@ func TestExtractUpstreamModel(t *testing.T) {
 // 让客户端在选型时就拿到明确错误，而不是拿到一个"成功但其实不是 Pro"的回复。
 // （配了有效 cookie 时它是真能用的，见 availableModels 注释。）
 func TestProHiddenWithoutCookie(t *testing.T) {
-	cookieRuntime.Store("")
+	// cookie 池此时是空的（TestMain 给的是全新临时库）
 	if _, ok := availableModels()["gemini-3.1-pro"]; ok {
 		t.Error("无 cookie 时不该暴露 3.1 Pro")
 	}
@@ -249,8 +248,7 @@ func TestProHiddenWithoutCookie(t *testing.T) {
 		t.Errorf("错误信息没解释原因和解法: %v", err)
 	}
 
-	cookieRuntime.Store("SAPISID=dummy")
-	defer cookieRuntime.Store("")
+	withPoolCookie(t)
 	if _, ok := availableModels()["gemini-3.1-pro"]; !ok {
 		t.Error("配了 cookie 时应暴露 3.1 Pro")
 	}
