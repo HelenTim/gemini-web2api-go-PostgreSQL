@@ -35,6 +35,8 @@ type Config struct {
 	FallbackDirect bool `json:"fallback_direct"`
 	// cookie 失效时是否降级成匿名继续跑。默认 false。
 	FallbackAnon bool `json:"fallback_anon"`
+	// 是否自动从 /app 页面抓最新 bl 版本号。默认 true。
+	GeminiBLAuto bool `json:"gemini_bl_auto"`
 }
 
 var (
@@ -67,6 +69,7 @@ func defaultConfig() Config {
 		ProxyCooldownMin: 120,
 		FallbackDirect:   false,
 		FallbackAnon:     false,
+		GeminiBLAuto:     true,
 	}
 }
 

@@ -35,6 +35,8 @@ type RuntimeConfig struct {
 	// FallbackAnon 决定 cookie 失效时是降级成匿名继续跑还是直接报错。
 	// 默认 false：匿名档拿不到 3.1 Pro / 扩展思考 / 生图，降级了客户端也看不出来。
 	FallbackAnon bool `json:"fallback_anon"`
+	// GeminiBLAuto 决定是否定期从 /app 页面抓最新的 bl 版本号覆盖上面钉死的值。
+	GeminiBLAuto bool `json:"gemini_bl_auto"`
 }
 
 const runtimeConfigKey = "runtime_config"
@@ -64,6 +66,7 @@ func initRuntimeConfig() {
 		ProxyCooldownMin: cfg.ProxyCooldownMin,
 		FallbackDirect:   cfg.FallbackDirect,
 		FallbackAnon:     cfg.FallbackAnon,
+		GeminiBLAuto:     cfg.GeminiBLAuto,
 	}
 	if raw := kvGet(runtimeConfigKey); raw != "" {
 		saved := base

@@ -237,12 +237,6 @@ func streamGenerate(prompt string, mc ModelConfig,
 		return nil, err
 	}
 
-	reqid := time.Now().Unix() % 1000000
-	endpoint := fmt.Sprintf(
-		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
-		rtCfg().GeminiBL, reqid,
-	)
-
 	cookieStr, sapisid, cookieID := loadCookie()
 
 	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
@@ -268,6 +262,14 @@ func streamGenerate(prompt string, mc ModelConfig,
 		proxyURL = rtCfg().Proxy // fallback 静态 proxy（一般用不到）
 	}
 	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
+
+	// endpoint 要等出口定下来才能拼：currentBL 可能顺手踢一次后台抓取，
+	// 那个抓取必须跟正式请求走同一个出口，否则配了代理池也会从本机 IP 漏一次。
+	reqid := time.Now().Unix() % 1000000
+	endpoint := fmt.Sprintf(
+		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
+		currentBL(proxyURL), reqid,
+	)
 
 	// 取 XSRF token 要走跟正式请求同一个出口，否则 token 和请求来自两个 IP。
 	xsrfToken, xerr := getXSRF(cookieStr, proxyURL)
@@ -729,7 +731,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	reqid := time.Now().Unix() % 1000000
 	endpoint := fmt.Sprintf(
 		"https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=%s&hl=en&_reqid=%d&rt=c",
-		rtCfg().GeminiBL, reqid,
+		currentBL(proxyURL), reqid,
 	)
 
 	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关。
