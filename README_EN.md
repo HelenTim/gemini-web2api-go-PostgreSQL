@@ -254,6 +254,7 @@ Saving takes effect **immediately**, no restart. Values live in the database and
 |---|---|
 | Default model | used when the client doesn't send `model` |
 | Per-slot concurrency / RPM / RPH | rate limits, 0 = unlimited |
+| Prompt token cap | over the cap, the oldest history is dropped first so your newest question survives. 0 = unlimited |
 | Retry attempts / retry delay / upstream timeout | |
 | Detail retention days | only request details expire; aggregates are kept forever |
 | TLS fingerprint | `chrome_146` (default) / `chrome_144` / `chrome_133` / `firefox_147` / `safari_16_0` / `safari_ios_17_0` |
