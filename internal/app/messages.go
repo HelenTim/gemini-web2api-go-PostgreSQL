@@ -168,6 +168,94 @@ func getStr(m map[string]interface{}, k string) string {
 	return ""
 }
 
+const (
+	toolFenceOpen  = "```tool_call"
+	toolFenceClose = "```"
+)
+
+// toolFenceGate 让带 tools 的请求也能真流式。
+//
+// 问题：上游没有协议层的工具调用，我们让模型吐 ```tool_call``` 围栏，而围栏要
+// 完整文本才能解析。边出边转发会把围栏原文推给客户端 —— 客户端看到的是一段
+// markdown 代码块，不是 tool_calls。所以这条路以前退化成收完再发。
+//
+// 解法：只发**确定不属于围栏**的部分。围栏内的全部扣住，最后由 parseToolCalls
+// 统一转成 tool_calls。关键是尾巴上可能压着半个开围栏（"``" 或 "```tool_c"），
+// 那部分也得扣住等下一帧 —— 否则先把 "``" 发出去，下一帧才发现它是围栏的开头，
+// 而已发出的内容收不回来。
+//
+// Sent() 是**实际发给客户端**的文本，跟 deltaTracker 的 emitted 不是一回事
+// （后者含围栏原文）。收尾补发尾巴时必须拿这个比，否则前缀对不上，尾巴会丢。
+type toolFenceGate struct {
+	emit    func(string)
+	buf     string // 还没判定完的尾巴
+	sent    strings.Builder
+	inFence bool
+}
+
+func newToolFenceGate(emit func(string)) *toolFenceGate {
+	return &toolFenceGate{emit: emit}
+}
+
+// Sent 返回到目前为止实际发给客户端的全部文本。
+func (g *toolFenceGate) Sent() string {
+	if g == nil {
+		return ""
+	}
+	return g.sent.String()
+}
+
+func (g *toolFenceGate) send(s string) {
+	if s == "" {
+		return
+	}
+	g.sent.WriteString(s)
+	g.emit(s)
+}
+
+// Push 吃进一段增量文本，把确定不在围栏里的部分立刻发出去。
+func (g *toolFenceGate) Push(delta string) {
+	g.buf += delta
+	for {
+		if g.inFence {
+			j := strings.Index(g.buf, toolFenceClose)
+			if j < 0 {
+				return // 围栏还没闭合，整段扣住
+			}
+			g.buf = g.buf[j+len(toolFenceClose):]
+			g.inFence = false
+			continue
+		}
+		if i := strings.Index(g.buf, toolFenceOpen); i >= 0 {
+			g.send(g.buf[:i])
+			g.buf = g.buf[i+len(toolFenceOpen):]
+			g.inFence = true
+			continue
+		}
+		keep := partialPrefixLen(g.buf, toolFenceOpen)
+		g.send(g.buf[:len(g.buf)-keep])
+		g.buf = g.buf[len(g.buf)-keep:]
+		return
+	}
+}
+
+// partialPrefixLen 返回 s 的末尾有多少字节是 marker 的前缀（不含完整匹配）。
+//
+// marker 全是 ASCII，所以匹配到的后缀必然也全是 ASCII，切点不会落在多字节
+// 字符中间 —— UTF-8 的续字节 >=0x80，永远不等于 marker 里的任何字节。
+func partialPrefixLen(s, marker string) int {
+	max := len(marker) - 1
+	if len(s) < max {
+		max = len(s)
+	}
+	for k := max; k > 0; k-- {
+		if strings.HasPrefix(marker, s[len(s)-k:]) {
+			return k
+		}
+	}
+	return 0
+}
+
 var toolCallRe = regexp.MustCompile("(?s)```tool_call\\s*\\n(.*?)\\n```")
 
 // parseToolCalls extracts ```tool_call``` blocks. Returns clean text + tool_calls.

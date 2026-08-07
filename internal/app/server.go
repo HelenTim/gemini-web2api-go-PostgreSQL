@@ -225,15 +225,20 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	cid := "chatcmpl-" + randHex(12)
 	created := time.Now().Unix()
 
-	// 只有无 tools 时才真流式：tool_call 块必须拿到完整文本才能 regex 解析，
-	// 边出边转发会把 ```tool_call``` 原文推给客户端。
+	// 带 tools 时正文过一道围栏闸门：```tool_call``` 块要完整文本才能解析，
+	// 直接转发会把围栏原文推给客户端，所以只放行确定不在围栏里的部分。
+	// 思考链跟围栏无关，两种情况都直接流。
 	var sse *sseWriter
+	var gate *toolFenceGate
 	var onDelta, onReasoning func(string)
 	if stream {
 		sse = newSSEWriter(w, cid, created, modelName)
+		onReasoning = sse.SendReasoning
 		if len(tools) == 0 {
 			onDelta = sse.SendContent
-			onReasoning = sse.SendReasoning
+		} else {
+			gate = newToolFenceGate(sse.SendContent)
+			onDelta = gate.Push
 		}
 	}
 
@@ -286,7 +291,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 				sse.SendReasoning(rest)
 			}
 		}
-		if rest := remainingText(text, res); rest != "" {
+		// 补尾巴要跟**实际发给客户端的内容**比。走了闸门时 res.Emitted 含围栏
+		// 原文，拿它比前缀会对不上，尾巴会整段丢掉。
+		if rest := remainingOf(text, sentText(res, gate)); rest != "" {
 			sse.SendContent(rest)
 		}
 		if len(toolCalls) > 0 {
@@ -326,6 +333,19 @@ func remainingText(text string, res *StreamResult) string {
 		return text
 	}
 	return remainingOf(text, res.Emitted)
+}
+
+// sentText 返回本次实际发给客户端的正文。
+// 没走围栏闸门时就是 deltaTracker 发出的那些；走了闸门时以闸门为准 ——
+// 闸门扣掉了围栏，跟 res.Emitted 不是同一份文本。
+func sentText(res *StreamResult, gate *toolFenceGate) string {
+	if gate != nil {
+		return gate.Sent()
+	}
+	if res == nil {
+		return ""
+	}
+	return res.Emitted
 }
 
 // remainingOf 返回 full 里还没发出去的尾巴。emitted 为空时返回全文。
