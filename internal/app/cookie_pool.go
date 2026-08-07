@@ -45,13 +45,34 @@ func cookieNames(cookie string) []string {
 }
 
 // accountAdd 往池里插一条。cookie 必须含 SAPISID（否则多半没复制全）。
+// 这是面板/API 手工添加走的路，用户当场看得到错误提示，拦下来是对的。
 func accountAdd(label, cookie, note string) (int64, error) {
+	cookie = strings.TrimSpace(cookie)
+	if !strings.Contains(cookie, "SAPISID") {
+		return 0, fmt.Errorf("cookie 里没有 SAPISID，多半没复制全（需要 gemini.google.com 下的完整 cookie，至少含 SID / HSID / SSID / APISID / SAPISID / __Secure-1PSID）")
+	}
+	return accountInsert(label, cookie, note)
+}
+
+// accountAdopt 是启动时导入既有配置专用的：**不做 SAPISID 检查**。
+//
+// 判据是「升级不能改变用户已有配置的可用性」。缺 SAPISID 的 cookie 在旧版是被
+// 原样当 Cookie 头发出去的（只是算不出 SAPISIDHASH 授权头），能不能用由上游说了算 ——
+// 不该在升级时被我们新加的校验拦下来，让用户悄无声息地退回匿名。只警告，
+// 健康度会在面板上如实体现。
+func accountAdopt(label, cookie, note string) (int64, error) {
+	cookie = strings.TrimSpace(cookie)
+	if !strings.Contains(cookie, "SAPISID") {
+		logf("[cookie] %s 里没有 SAPISID，算不出 SAPISIDHASH 授权头，可能只当匿名处理；"+
+			"先按原样导入，请到面板核对", label)
+	}
+	return accountInsert(label, cookie, note)
+}
+
+func accountInsert(label, cookie, note string) (int64, error) {
 	cookie = strings.TrimSpace(cookie)
 	if cookie == "" {
 		return 0, fmt.Errorf("cookie 不能为空")
-	}
-	if !strings.Contains(cookie, "SAPISID") {
-		return 0, fmt.Errorf("cookie 里没有 SAPISID，多半没复制全（需要 gemini.google.com 下的完整 cookie，至少含 SID / HSID / SSID / APISID / SAPISID / __Secure-1PSID）")
 	}
 	res, err := getDB().Exec(
 		`INSERT INTO accounts(label, cookie, status, note, created_at) VALUES (?,?,?,?,?)`,
@@ -135,8 +156,8 @@ func seedCookiesFromConfig() {
 }
 
 // migrateLegacyCookie 一次性把 kv 里遗留的单 cookie 搬进池子。
-// 跟静态代理同样两条保命规则：入池成功才标记完成（accountAdd 要求含 SAPISID，
-// 而旧路径不要求，可能拒收），以及不去动 kv 里原来的值（回滚到旧版仍可用）。
+// 三条保命规则：走 accountAdopt 不做 SAPISID 校验（旧路径不校验，升级不该改变
+// 可用性）、入池成功才标记完成、不去动 kv 里原来的值（回滚到旧版仍可用）。
 func migrateLegacyCookie() {
 	if kvGet(kvLegacyCookieDone) == "1" {
 		return
@@ -151,7 +172,7 @@ func migrateLegacyCookie() {
 		return
 	}
 	if !poolHasCookie(cookie) {
-		if _, err := accountAdd("原单 cookie", cookie, "从「设置」页迁入"); err != nil {
+		if _, err := accountAdopt("原单 cookie", cookie, "从「设置」页迁入"); err != nil {
 			logf("[cookie] 「设置」页的单 cookie 迁入池子失败，原值保留、下次启动重试: %v", err)
 			return
 		}
@@ -202,7 +223,7 @@ func syncSeededCookieFile() {
 		_ = kvSet(kvSeededCookieID, "")
 		return
 	}
-	id, err := accountAdd("cookie-file", cur, "来自 --cookie-file")
+	id, err := accountAdopt("cookie-file", cur, "来自 --cookie-file")
 	if err != nil {
 		logf("[cookie] --cookie-file 入池失败: %v", err)
 		return

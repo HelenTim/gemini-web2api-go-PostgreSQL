@@ -327,14 +327,18 @@ func proxyCreate(name, url string, weight int) (int64, error) {
 
 // validateProxyURL 校验代理 URL 协议（参考 Kiro-Gogogo 实现）。
 // 支持 http / https / socks5 / socks5h。
+//
+// scheme 按大小写不敏感比：URL 的 scheme 本来就不区分大小写，url.Parse 会统一转小写，
+// 所以 HTTP:// 在 4.0.0 那条不做校验的静态代理路径上是能正常工作的。校验若大小写
+// 敏感，升级时就会把这种值拦下来 —— 用户什么都没改，代理却不工作了。
 func validateProxyURL(s string) error {
-	if !strings.HasPrefix(s, "http://") &&
-		!strings.HasPrefix(s, "https://") &&
-		!strings.HasPrefix(s, "socks5://") &&
-		!strings.HasPrefix(s, "socks5h://") {
-		return errors.New("代理 URL 必须以 http:// / https:// / socks5:// / socks5h:// 开头")
+	low := strings.ToLower(s)
+	for _, p := range []string{"http://", "https://", "socks5://", "socks5h://"} {
+		if strings.HasPrefix(low, p) {
+			return nil
+		}
 	}
-	return nil
+	return errors.New("代理 URL 必须以 http:// / https:// / socks5:// / socks5h:// 开头")
 }
 
 func proxyUpdate(id int64, name, url string, enabled *bool, weight *int) error {

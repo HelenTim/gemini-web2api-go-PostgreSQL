@@ -58,11 +58,33 @@ func TestMigrateLegacyCookie(t *testing.T) {
 	}
 }
 
-// 迁移失败**不能**标记完成，否则用户的 cookie 就永远进不了池子了。
-// accountAdd 要求含 SAPISID，而旧的单 cookie 路径不要求，所以真会撞上。
-func TestMigrateLegacyCookieRejectedKeepsRetrying(t *testing.T) {
+// 缺 SAPISID 的 cookie 也要照收：旧版把它原样当 Cookie 头发出去，能不能用由上游定。
+// 升级不能因为我们新加了校验，就让用户的号悄无声息地退回匿名。
+func TestMigrateLegacyCookieWithoutSAPISID(t *testing.T) {
 	resetSeedState(t)
-	mustKV(t, "google_cookie", "SID=only; HSID=x") // 没有 SAPISID
+	const raw = "SID=only; HSID=x; __Secure-1PSID=z"
+	mustKV(t, "google_cookie", raw)
+
+	seedCookiesFromConfig()
+
+	list := accountList()
+	if len(list) != 1 || list[0].Cookie != raw {
+		t.Fatalf("缺 SAPISID 就被拦下了，用户升级后会变匿名: %+v", list)
+	}
+	if !hasCookie() {
+		t.Error("池子里有账号，hasCookie 却是 false")
+	}
+	// 但手工从面板加同样的值仍然要拦——那时用户当场看得到错误提示
+	if _, err := accountAdd("手工", raw, ""); err == nil {
+		t.Error("面板手工添加不该放过缺 SAPISID 的 cookie")
+	}
+}
+
+// 迁移失败**不能**标记完成，否则用户的 cookie 就永远进不了池子了。
+func TestMigrateLegacyCookieBadValueKeepsRetrying(t *testing.T) {
+	resetSeedState(t)
+	// JSON 形式但取不出 cookie 字段：normalizeCookie 判失败
+	mustKV(t, "google_cookie", `{"sapisid":"x"}`)
 
 	seedCookiesFromConfig()
 
@@ -77,8 +99,25 @@ func TestMigrateLegacyCookieRejectedKeepsRetrying(t *testing.T) {
 	}
 }
 
-// 同上，代理侧。旧版 validateRuntimeConfig 对这个字段零校验，
-// 用户存的可能是缺 scheme 的 host:port，而 proxyCreate 会拒收。
+// scheme 大小写不敏感：url.Parse 会把 scheme 转小写，所以 HTTP:// 在 4.0.0
+// 那条不校验的静态代理路径上是能用的，升级时不能被拦下来。
+func TestProxySchemeCaseInsensitive(t *testing.T) {
+	resetSeedState(t)
+	mustKV(t, runtimeConfigKey, `{"proxy":"HTTP://1.2.3.4:8080"}`)
+
+	seedProxiesFromConfig()
+
+	list := listProxies()
+	if len(list) != 1 || list[0].URL != "HTTP://1.2.3.4:8080" {
+		t.Fatalf("大写 scheme 被拦了，用户升级后代理不工作: %+v", list)
+	}
+}
+
+// 缺 scheme 的值确实会被 proxyCreate 拒收，这里保证拒收时不丢原值、不标记完成。
+//
+// 跟 cookie 那条的处理不同（那边放宽了校验）：`1.2.3.4:8080` 在 4.0.0 上**本来就没生效过**
+// —— url.Parse 对它直接报错（first path segment in URL cannot contain colon），
+// t.Proxy 保持 nil，请求走的是直连。所以拒收它不构成功能回退，不需要放宽。
 func TestMigrateLegacyProxyRejectedKeepsRetrying(t *testing.T) {
 	resetSeedState(t)
 	mustKV(t, runtimeConfigKey, `{"proxy":"1.2.3.4:8080","per_ip_rph":80}`)
