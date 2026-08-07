@@ -921,6 +921,8 @@ const RT_GROUPS = [
     fields: [
       { k: 'proxy_cooldown_min', label: '熔断冷却（分钟）', type: 'int', min: 0, max: 10080,
         hint: '代理连续失败 5 次后歇多久再放回池子。实测被拦的出口 106-121 分钟自恢复，默认 120；0=不恢复，要去代理池页面手动重置' },
+      { k: 'fallback_direct', label: '无可用代理时退回直连', type: 'bool',
+        hint: '关：直接返回 429，本机 IP 不会暴露给上游（默认）。开：可用性优先，但上游会看到你的真实出口' },
     ],
   },
   {

@@ -149,8 +149,19 @@ func acquireSlot() (Proxy, bool, error) {
 		if p, ok := pickProxyWithCapacity(); ok {
 			return p, true, nil
 		}
-		// 代理池存在但都满了 → 不退回直连（因为部署者明确想用代理）
-		return Proxy{}, false, &RateLimitError{Reason: "rph", ProxyID: -1}
+		// 代理池里有代理但一个都用不上（限流满 / 全禁用 / 全熔断且没过冷却）。
+		// 默认**不退回直连** —— 配了代理池就意味着不想让上游看到本机 IP，
+		// 悄悄直连等于把这个前提废掉，而且日志上只是几条普通请求，很难发现。
+		// 要可用性优先于隐藏 IP 的部署可以打开 fallback_direct。
+		if !rtCfg().FallbackDirect {
+			return Proxy{}, false, &RateLimitError{Reason: "rph", ProxyID: -1}
+		}
+		if ok, reason := trySlotAcquire(0); ok {
+			logf("[proxy] 代理池无可用出口，本次退回直连（fallback_direct 已开）")
+			return Proxy{}, true, nil
+		} else {
+			return Proxy{}, false, &RateLimitError{Reason: reason, ProxyID: 0}
+		}
 	}
 
 	// 2. 没配代理池 → 用直连 slot（id=0）

@@ -31,6 +31,8 @@ type Config struct {
 
 	// 代理连续失败熔断后隔多久放回池子（分钟），0 = 不恢复。
 	ProxyCooldownMin int `json:"proxy_cooldown_min"`
+	// 代理池无可用出口时是否退回直连。默认 false。
+	FallbackDirect bool `json:"fallback_direct"`
 }
 
 var (
@@ -61,6 +63,7 @@ func defaultConfig() Config {
 		PerIPRPH:        80,
 		// 实测被拦的出口 106-121 分钟自动恢复，冷却取 120 分钟。
 		ProxyCooldownMin: 120,
+		FallbackDirect:   false,
 	}
 }
 
