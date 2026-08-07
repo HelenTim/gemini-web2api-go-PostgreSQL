@@ -50,19 +50,18 @@ func rotateAccount(a CookieAccount) (time.Duration, error) {
 		proxyURL = proxyURLByID(a.ProxyID)
 	}
 
-	id, interval, err := fetchRotateParams(a.Cookie, proxyURL)
+	// 页面这一发自己就带 Set-Cookie（抓包里刷的是 SIDCC 三项），先收下再打 POST，
+	// 否则 POST 用的还是旧值。
+	cookie := a.Cookie
+	id, interval, pageSet, err := fetchRotateParams(cookie, proxyURL)
 	if err != nil {
 		return 0, err
 	}
+	cookie = mergeSetCookie(cookie, pageSet)
+
 	body := fmt.Sprintf(`[%d,"%s"]`, rotateProductID, id)
-	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"Origin":        "https://accounts.google.com",
-		"Referer":       rotatePageURL,
-		"Cookie":        a.Cookie,
-		"Accept":        "*/*",
-		"Cache-Control": "no-cache",
-	}
+	headers := rotatePostHeaders()
+	headers["Cookie"] = cookie
 	status, setCookie, respBody, err := rotatePost(rotatePostURL, headers, []byte(body), proxyURL)
 	if err != nil {
 		return 0, err
@@ -70,40 +69,97 @@ func rotateAccount(a CookieAccount) (time.Duration, error) {
 	if status != 200 {
 		return 0, fmt.Errorf("RotateCookies 返回 HTTP %d: %s", status, truncate(string(respBody), 120))
 	}
-	// 抓包里这个响应不带 Set-Cookie，但合并一下不亏 —— 真带了就是免费的续命。
-	if merged := mergeSetCookie(a.Cookie, setCookie); merged != a.Cookie {
-		updateAccountCookie(a.ID, merged)
+	cookie = mergeSetCookie(cookie, setCookie)
+	if cookie != a.Cookie {
+		updateAccountCookie(a.ID, cookie)
+	}
+	// 记下这一轮到底刷新了哪些项。上游只回 SIDCC 三项，而浏览器里
+	// __Secure-1PSIDTS 一族每 8 分钟左右也在换 —— 那部分我们目前拿不到，
+	// 打出来是为了下次拿到活 cookie 时能直接看出有没有变化。
+	if names := setCookieNames(append(append([]string{}, pageSet...), setCookie...)); len(names) > 0 {
+		logf("[rotate] 账号 #%d 刷新了 %s", a.ID, strings.Join(names, ", "))
 	}
 	return interval, nil
 }
 
-// fetchRotateParams 抓 RotateCookiesPage，取会话标识和服务端指定的间隔。
-func fetchRotateParams(cookie, proxyURL string) (string, time.Duration, error) {
-	status, _, body, err := rotateGet(rotatePageURL, cookie, proxyURL)
+// setCookieNames 把 Set-Cookie 头里的名字抽出来去重，只用于日志。
+func setCookieNames(headers []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, h := range headers {
+		name := h
+		if i := strings.Index(name, "="); i > 0 {
+			name = name[:i]
+		}
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// fetchRotateParams 抓 RotateCookiesPage，取会话标识、服务端指定的间隔，以及这一发
+// 自己带回的 Set-Cookie。
+func fetchRotateParams(cookie, proxyURL string) (string, time.Duration, []string, error) {
+	status, setCookie, body, err := rotateGet(rotatePageURL, cookie, proxyURL)
 	if err != nil {
-		return "", 0, err
+		return "", 0, nil, err
 	}
 	if status != 200 {
-		return "", 0, fmt.Errorf("取轮转页返回 HTTP %d", status)
+		return "", 0, nil, fmt.Errorf("取轮转页返回 HTTP %d", status)
 	}
 	m := rotateInitRe.FindSubmatch(body)
 	if m == nil {
 		// 页面拿到了却没有 init(...)，最可能是 cookie 已失效跳到了登录页。
-		return "", 0, fmt.Errorf("轮转页里没有 init(...)（cookie 可能已失效）")
+		return "", 0, nil, fmt.Errorf("轮转页里没有 init(...)（cookie 可能已失效）")
 	}
 	id := string(m[1])
 	interval := defaultRotateInterval
 	if sec, e := strconv.ParseFloat(string(m[3]), 64); e == nil && sec >= 60 && sec <= 3600 {
 		interval = time.Duration(sec) * time.Second
 	}
-	return id, interval, nil
+	return id, interval, setCookie, nil
 }
 
+// 下面两组 header 逐项抄自抓包（wireHeaders，不是 headers —— 后者不含 cookie）。
+// 抓包里还有 sec-ch-ua-arch / -bitness / -form-factors / -full-version-list /
+// -model / -platform-version / -wow64 和 x-browser-* / x-client-data /
+// x-chrome-id-consistency-request，那些是 Chrome 自己贴的浏览器身份，我们贴了反而
+// 会跟 TLS 指纹对不上，所以不贴。
+
+// rotateGet 取轮转页。它在浏览器里是个 iframe 导航，所以 sec-fetch 那组跟普通
+// XHR 完全不同（dest=iframe / mode=navigate / site=same-site），别套用默认值。
 func rotateGet(url, cookie, proxyURL string) (int, []string, []byte, error) {
 	return rotateDo("GET", url, map[string]string{
-		"Cookie": cookie,
-		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+		"Cookie":                    cookie,
+		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+		"Referer":                   "https://gemini.google.com/",
+		"Sec-Fetch-Dest":            "iframe",
+		"Sec-Fetch-Mode":            "navigate",
+		"Sec-Fetch-Site":            "same-site",
+		"Sec-Fetch-User":            "?1",
+		"Upgrade-Insecure-Requests": "1",
+		"Priority":                  "u=0, i",
 	}, nil, proxyURL)
+}
+
+// rotatePostHeaders 是 POST /RotateCookies 那一发的完整头，调用方只补 Cookie。
+func rotatePostHeaders() map[string]string {
+	return map[string]string{
+		"Accept":         "*/*",
+		"Content-Type":   "application/json",
+		"Origin":         "https://accounts.google.com",
+		"Referer":        rotatePageURL,
+		"Cache-Control":  "no-cache",
+		"Pragma":         "no-cache",
+		"Priority":       "u=1, i",
+		"Sec-Fetch-Dest": "empty",
+		"Sec-Fetch-Mode": "same-origin",
+		"Sec-Fetch-Site": "same-origin",
+	}
 }
 
 func rotatePost(url string, headers map[string]string, body []byte, proxyURL string) (
@@ -112,19 +168,31 @@ func rotatePost(url string, headers map[string]string, body []byte, proxyURL str
 }
 
 // rotateDo 走跟正式请求同一个出口：保活从别的 IP 发，等于告诉上游这个会话在两处活动。
+//
+// 两条传输路径共用同一份 header。以前只有走代理那条调 applyChromeHeaders，直连那条
+// 连 User-Agent 都不发 —— 同一个账号在上游看来会因为走没走代理而呈现两种客户端。
 func rotateDo(method, url string, headers map[string]string, body []byte, proxyURL string) (
 	int, []string, []byte, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = strings.NewReader(string(body))
 	}
+	merged := map[string]string{
+		"User-Agent":         ChromeUA,
+		"Accept-Language":    "en-US,en;q=0.9",
+		"Sec-CH-UA":          `"Chromium";v="146", "Google Chrome";v="146", "Not?A_Brand";v="24"`,
+		"Sec-CH-UA-Mobile":   "?0",
+		"Sec-CH-UA-Platform": `"Windows"`,
+	}
+	for k, v := range headers {
+		merged[k] = v
+	}
 	if proxyURL != "" {
 		req, err := http.NewRequest(method, url, rdr)
 		if err != nil {
 			return 0, nil, nil, err
 		}
-		applyChromeHeaders(req)
-		for k, v := range headers {
+		for k, v := range merged {
 			req.Header.Set(k, v)
 		}
 		resp, err := getStdlibClient(proxyURL).Do(req)
@@ -139,7 +207,7 @@ func rotateDo(method, url string, headers map[string]string, body []byte, proxyU
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	for k, v := range headers {
+	for k, v := range merged {
 		req.Header.Set(k, v)
 	}
 	resp, err := getTLSClient().Do(req)
