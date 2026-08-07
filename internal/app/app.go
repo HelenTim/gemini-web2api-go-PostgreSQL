@@ -77,6 +77,7 @@ func Run() {
 	initRuntimeConfig() // 面板改过的运行时配置盖在启动配置之上
 	initCookie()        // 面板存的 cookie 优先于 --cookie-file
 	loadProxies()
+	seedProxiesFromConfig() // --proxy / 遗留静态代理并进代理池
 	resolvedAPIKey := initAPIKey(*apiKey)
 	initTokenizer()
 	startScheduler()
@@ -157,9 +158,9 @@ func Run() {
 			cookieStatus += " (admin panel)"
 		}
 	}
-	proxyStatus := rtCfg().Proxy
-	if proxyStatus == "" {
-		proxyStatus = "none"
+	proxyStatus := "none (direct)"
+	if n := len(listProxies()); n > 0 {
+		proxyStatus = fmt.Sprintf("%d in pool", n)
 	}
 	var modelNames []string
 	for n := range availableModels() {

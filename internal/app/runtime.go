@@ -25,7 +25,6 @@ type RuntimeConfig struct {
 	LogRequests     bool   `json:"log_requests"`
 	Impersonate     string `json:"impersonate"`
 	GeminiBL        string `json:"gemini_bl"`
-	Proxy           string `json:"proxy"`
 	// ProxyCooldownMin 是代理连续失败熔断后隔多久放回池子，单位分钟。
 	// 0 = 不恢复（熔断即永久除名，要手动重置）。默认按实测的封禁恢复时长取 120。
 	ProxyCooldownMin int `json:"proxy_cooldown_min"`
@@ -61,7 +60,6 @@ func initRuntimeConfig() {
 		LogRequests:     cfg.LogRequests,
 		Impersonate:     cfg.Impersonate,
 		GeminiBL:        cfg.GeminiBL,
-		Proxy:           cfg.Proxy,
 
 		ProxyCooldownMin: cfg.ProxyCooldownMin,
 		FallbackDirect:   cfg.FallbackDirect,

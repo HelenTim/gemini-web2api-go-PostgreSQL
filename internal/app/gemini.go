@@ -257,10 +257,9 @@ func streamGenerate(prompt string, mc ModelConfig,
 	}
 	defer releaseSlot(picked.ID) // picked.ID=0 表示直连 slot
 
+	// picked.URL 为空 = 直连 slot。代理只有代理池一个入口，没有别的兜底出口了
+	// （原来那个「静态代理」字段已并进池子，见 seedProxiesFromConfig）。
 	proxyURL := picked.URL
-	if proxyURL == "" {
-		proxyURL = rtCfg().Proxy // fallback 静态 proxy（一般用不到）
-	}
 	pickedOK := picked.ID > 0 // 是否真用了代理池里的代理
 
 	// endpoint 要等出口定下来才能拼：currentBL 可能顺手踢一次后台抓取，

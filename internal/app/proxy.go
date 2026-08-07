@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -87,6 +88,69 @@ func proxyUsable(p Proxy, now int64, cooldownMin int) bool {
 		return false
 	}
 	return now-p.LastUsed >= int64(cooldownMin)*60
+}
+
+// seedProxiesFromConfig 把启动参数和历史遗留的「静态代理」并进代理池。
+//
+// 以前代理有两个入口：代理池，和「设置」页那个单独的静态代理文本框（池空时才用）。
+// 后者不是"简单版"而是**残废版** —— 它走的是 picked.ID=0 这条路，于是跟直连共用
+// 同一个限流 slot、recordProxyResult 压根不会被调用，也就没有失败计数、没有熔断、
+// 没有冷却、面板上看不到任何状态。池子里放一个，处处严格更好。
+//
+// 现在请求路径只认池子，这个函数负责把旧入口的值搬进来：
+//   - cfg.Proxy（--proxy / config.json）：每次启动 upsert，改了 compose 重启就生效
+//   - kv 里遗留的静态代理：一次性搬进来并清掉，之后从面板管理（不然用户从池子里
+//     删掉它，下次重启又会冒出来）
+func seedProxiesFromConfig() {
+	if v := strings.TrimSpace(takeLegacyStaticProxy()); v != "" {
+		if adopted := adoptProxy(v, "原静态代理"); adopted {
+			logf("[proxy] 「设置」页的静态代理已迁入代理池，该字段已移除")
+		}
+	}
+	if v := strings.TrimSpace(cfg.Proxy); v != "" {
+		if adopted := adoptProxy(v, "启动参数"); adopted {
+			logf("[proxy] --proxy / config.json 的代理已加入代理池")
+		}
+	}
+}
+
+// adoptProxy 按 URL 去重地把一个代理放进池子，返回是否真的新建了。
+func adoptProxy(url, name string) bool {
+	proxyMu.RLock()
+	for _, p := range proxyCache {
+		if p.URL == url {
+			proxyMu.RUnlock()
+			return false
+		}
+	}
+	proxyMu.RUnlock()
+	if _, err := proxyCreate(name, url, 1); err != nil {
+		logf("[proxy] %s 入池失败: %v", name, err)
+		return false
+	}
+	return true
+}
+
+// takeLegacyStaticProxy 取出 kv 里遗留的 runtime_config.proxy 并把它抹掉。
+// RuntimeConfig 已经没有这个字段了，所以只能直接操作原始 JSON。
+func takeLegacyStaticProxy() string {
+	raw := kvGet(runtimeConfigKey)
+	if raw == "" {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return ""
+	}
+	v, _ := m["proxy"].(string)
+	if strings.TrimSpace(v) == "" {
+		return ""
+	}
+	delete(m, "proxy")
+	if b, err := json.Marshal(m); err == nil {
+		_ = kvSet(runtimeConfigKey, string(b))
+	}
+	return v
 }
 
 // pickProxyWithCapacity 找一个可用（enabled + 没熔断或已过冷却）且限流没满的代理。

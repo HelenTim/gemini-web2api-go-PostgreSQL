@@ -16,7 +16,7 @@ type Config struct {
 	DefaultModel   string `json:"default_model"`
 	LogRequests    bool   `json:"log_requests"`
 	CookieFile     string `json:"cookie_file"`
-	Proxy          string `json:"proxy"`
+	Proxy          string `json:"proxy"` // 只用于启动时播种代理池，见 seedProxiesFromConfig
 	Impersonate    string `json:"impersonate"`
 	DBPath         string `json:"db_path"`
 	AdminToken     string `json:"admin_token"`
