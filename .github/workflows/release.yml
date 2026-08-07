@@ -27,9 +27,9 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#v}"
           # 用 sed 不用 grep -oP：-P 依赖 PCRE 且在非 UTF-8 locale 下直接罢工
-          code=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' server.go)
-          echo "tag=$tag  server.go=$code"
-          [ "$tag" = "$code" ] || { echo "::error::tag $tag 与 server.go 里的 $code 不一致"; exit 1; }
+          code=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/app/server.go)
+          echo "tag=$tag  internal/app/server.go=$code"
+          [ "$tag" = "$code" ] || { echo "::error::tag $tag 与 internal/app/server.go 里的 $code 不一致"; exit 1; }
 
       - run: go test ./...
 
