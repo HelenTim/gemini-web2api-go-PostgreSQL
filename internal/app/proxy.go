@@ -96,6 +96,14 @@ func pickProxyWithCapacity() (Proxy, bool) {
 	return Proxy{}, false
 }
 
+// recordProxyResult 回写一次请求的结果，并同步更新内存里那一条。
+//
+// 只改内存里的那一条，不整表重读：这个函数每个请求都会调，重读一次就是一次全表
+// SELECT，而它自己刚发起过 UPDATE —— 高并发下正是这对读写在 WAL 上撞出 SQLITE_BUSY，
+// 也就是代理池被读空、请求退回直连的触发条件。
+//
+// 代价是内存里的 FailCount++ 和 DB 的 fail_count+1 各算各的，别的进程直接改库会
+// 让两边漂移。单进程持有这个库，重启也会从 DB 重新加载，可以接受。
 func recordProxyResult(id int64, success bool, errStr string) {
 	if id == 0 {
 		return
@@ -107,7 +115,22 @@ func recordProxyResult(id int64, success bool, errStr string) {
 		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=fail_count+1, last_used=?, last_error=? WHERE id=?`,
 			now, errStr, id)
 	}
-	loadProxies()
+	proxyMu.Lock()
+	for i := range proxyCache {
+		if proxyCache[i].ID != id {
+			continue
+		}
+		proxyCache[i].LastUsed = now
+		if success {
+			proxyCache[i].FailCount = 0
+			proxyCache[i].LastError = ""
+		} else {
+			proxyCache[i].FailCount++
+			proxyCache[i].LastError = errStr
+		}
+		break
+	}
+	proxyMu.Unlock()
 }
 
 // CRUD ───────────────────────────────────────────────────────────────────────
