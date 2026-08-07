@@ -112,8 +112,12 @@ type StreamResult struct {
 	UpstreamModel string
 	ProxyID       int64
 	ProxyName     string
-	TTFBMs        int64
-	TotalMs       int64
+	// 用了 cookie 池里的哪个账号，0 = 匿名。失败的请求也要带上——
+	// 排查"加了 cookie 就大面积失败"时，最需要知道的正是失败那条用的哪个号。
+	AccountID    int64
+	AccountLabel string
+	TTFBMs       int64
+	TotalMs      int64
 }
 
 // RateLimitError 表示所有 IP slot 都达到了限流上限。
@@ -167,10 +171,6 @@ func acquireSlot() (Proxy, bool, error) {
 		return Proxy{}, false, &RateLimitError{Reason: reason, ProxyID: 0}
 	}
 }
-
-// 一个请求最多试几个 cookie。池子大时挨个试到底会让失败请求拖很久，
-// 而连试 3 个都不行基本说明是池子整体的问题，不是撞上个别坏号。
-const maxCookieTries = 3
 
 // releaseSlot 释放占用。proxyID=0 表示直连。
 func releaseSlot(proxyID int64) {
@@ -237,6 +237,8 @@ func streamGenerate(prompt string, mc ModelConfig,
 		return nil, err
 	}
 
+	cookieStr, sapisid, cookieID, cookieLabel := loadCookie()
+
 	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
 	// 匿名请求不需要，getXSRF 对空 cookie 返回空串。见 xsrf.go。
 	buildBody := func(at string) string {
@@ -248,10 +250,15 @@ func streamGenerate(prompt string, mc ModelConfig,
 		return form.Encode()
 	}
 
+	// 出错时也要把「用了哪个号 / 哪个出口」带回去，否则失败记录里全是空白。
+	attrib := func(err error) (*StreamResult, error) {
+		return &StreamResult{AccountID: cookieID, AccountLabel: cookieLabel}, err
+	}
+
 	// 通过限流器拿一个 slot（代理或直连）。所有 slot 满 → 直接 429。
 	picked, slotOK, slotErr := acquireSlot()
 	if !slotOK {
-		return nil, slotErr
+		return attrib(slotErr)
 	}
 	defer releaseSlot(picked.ID) // picked.ID=0 表示直连 slot
 
@@ -268,43 +275,21 @@ func streamGenerate(prompt string, mc ModelConfig,
 		currentBL(proxyURL), reqid,
 	)
 
-	// 挑账号并取 XSRF token。取 token 要走跟正式请求同一个出口，所以必须排在
-	// acquireSlot 之后 —— token 和请求来自两个 IP 会被上游看成两个会话。
-	//
-	// 一个 cookie 失效不该让整个请求失败：**挨个试**，直到有一个能用。
-	// 不这么做的话，池子里 2 个号坏 1 个就会让大约一半请求挂掉，而每次失败看起来
-	// 都像上游的问题，用户只会觉得"成功率莫名很低"。
-	cookieStr, sapisid, xsrfToken := "", "", ""
-	var cookieID int64
-	var lastCookieErr error
-	tried := map[int64]bool{}
-	for i := 0; i < maxCookieTries; i++ {
-		a, ok := pickCookieAccountExcept(tried)
-		if !ok {
-			break
-		}
-		tried[a.ID] = true
-		tok, err := getXSRF(a.Cookie, proxyURL)
-		if err == nil {
-			cookieStr, sapisid, cookieID, xsrfToken = a.Cookie, extractSAPISID(a.Cookie), a.ID, tok
-			break
-		}
-		// 取不到 SNlM0e 基本等于这个 cookie 已失效（页面把我们当匿名用户了），
-		// 记一次失败让面板上看得出是哪个号该换了，然后换下一个。
-		markCookieByStatus(a.ID, 401, err.Error())
-		lastCookieErr = err
-		logf("[cookie] 账号 #%d 不可用，换下一个：%v", a.ID, err)
-	}
-	if lastCookieErr != nil && cookieID == 0 {
+	// 取 XSRF token 要走跟正式请求同一个出口，否则 token 和请求来自两个 IP。
+	xsrfToken, xerr := getXSRF(cookieStr, proxyURL)
+	if xerr != nil {
+		// 取不到 SNlM0e 基本等于 cookie 已失效（页面把我们当匿名用户了），
+		// 记一次失败，让面板上能看出是哪个号该换了。
+		markCookieByStatus(cookieID, 401, xerr.Error())
 		if !rtCfg().FallbackAnon {
 			// 默认报错而不是降级：cookie 失效后上游不会拒绝，只是把你当匿名用户，
 			// 纯文本请求照样 200 —— 于是 3.1 Pro 被静默降级成 3.5 Flash-Lite、
 			// 思考链消失，客户端完全看不出来。宁可明确失败也不给假的成功。
-			return nil, fmt.Errorf("cookie 池里 %d 个账号都不可用（最后一个：%w）；"+
-				"到面板「Cookie 池」用「检测」按钮逐个排查，或打开 fallback_anon 降级匿名",
-				len(tried), lastCookieErr)
+			return attrib(fmt.Errorf("cookie 无法使用：%w", xerr))
 		}
-		logf("[cookie] 试过的 %d 个账号都不可用，本次降级匿名（能力会退化到匿名档）", len(tried))
+		logf("[cookie] 账号 %d 取 XSRF 失败，本次降级匿名（能力会退化到匿名档）：%v", cookieID, xerr)
+		cookieStr, sapisid, cookieID = "", "", 0
+		xsrfToken = ""
 	}
 	body := buildBody(xsrfToken)
 
@@ -418,6 +403,8 @@ func streamGenerate(prompt string, mc ModelConfig,
 			UpstreamModel:    extractUpstreamModel(string(raw)),
 			ProxyID:          picked.ID,
 			ProxyName:        picked.Name,
+			AccountID:        cookieID,
+			AccountLabel:     cookieLabel,
 			TTFBMs:           ttfb,
 			TotalMs:          time.Since(t0).Milliseconds(),
 		}, nil
@@ -425,7 +412,9 @@ func streamGenerate(prompt string, mc ModelConfig,
 	if lastErr != nil {
 		markCookieByStatus(cookieID, lastStatus, lastErr.Error())
 	}
-	return nil, lastErr
+	r, err := attrib(lastErr)
+	r.ProxyID, r.ProxyName = picked.ID, picked.Name
+	return r, err
 }
 
 // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
@@ -755,7 +744,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 
 	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关。
 	// 但 at 必须带——否则挂了 cookie 之后连通性探测会一直报 400，假报故障。
-	cookieStr, sapisid, _ := loadCookie()
+	cookieStr, sapisid, _, _ := loadCookie()
 	if tok, e := getXSRF(cookieStr, proxyURL); e == nil && tok != "" {
 		form.Set("at", tok)
 		body = form.Encode()

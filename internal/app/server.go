@@ -119,7 +119,8 @@ func callGemini(prompt string, mc ModelConfig, tools []map[string]interface{},
 	onDelta, onReasoning func(string)) (string, []ToolCall, *StreamResult, error) {
 	res, err := streamGenerate(prompt, mc, onDelta, onReasoning)
 	if err != nil {
-		return "", nil, nil, err
+		// res 非 nil：失败时它只带归属（哪个号 / 哪个出口），给 recordRequest 用
+		return "", nil, res, err
 	}
 	text := extractResponseText(res.Raw)
 	if text == "" {
@@ -162,6 +163,10 @@ func recordRequest(endpoint, model, prompt, response string, res *StreamResult, 
 			r.ProxyID = &res.ProxyID
 		}
 		r.ProxyName = res.ProxyName
+		if res.AccountID > 0 {
+			r.AccountID = &res.AccountID
+		}
+		r.AccountLabel = res.AccountLabel
 	}
 	go insertRequest(r)
 }
@@ -251,7 +256,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta, onReasoning)
 	if err != nil {
-		recordRequest("chat.completions", modelName, prompt, "", nil, 502, err.Error(), stream)
+		recordRequest("chat.completions", modelName, prompt, "", res, 502, err.Error(), stream)
 		if sse != nil && sse.Started() {
 			sse.Fail(err) // 已经开流，HTTP 状态码改不了了
 			return
@@ -558,7 +563,7 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 	// reasoning_content 不通用，这条路目前不暴露思考链。
 	text, toolCalls, res, err := callGemini(prompt, modelCfg, tools, onDelta, nil)
 	if err != nil {
-		recordRequest("responses", modelName, prompt, "", nil, 502, err.Error(), stream)
+		recordRequest("responses", modelName, prompt, "", res, 502, err.Error(), stream)
 		if stream {
 			writeEvent("response.failed", map[string]interface{}{
 				"type": "response.failed",

@@ -353,35 +353,17 @@ func poolHasCookie(cookie string) bool {
 // pickCookieAccount 从池里挑一个 enabled 账号，按 last_used_at 最久优先，
 // 挑中后立刻把 last_used_at 记为现在（下次轮到别人）。池空返回 (nil,false)。
 func pickCookieAccount() (*CookieAccount, bool) {
-	return pickCookieAccountExcept(nil)
-}
-
-// pickCookieAccountExcept 同上，但跳过本次已经试过的账号。
-//
-// 存在的理由：一个 cookie 失效不该让整个请求失败。池子里 2 个号坏 1 个，
-// 轮转会让大约一半请求撞上坏号 —— 表现就是"成功率莫名其妙很低"，而每次失败
-// 看起来都像是上游的问题。
-func pickCookieAccountExcept(skip map[int64]bool) (*CookieAccount, bool) {
-	rows, err := getDB().Query(
+	var a CookieAccount
+	err := getDB().QueryRow(
 		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count
-		 FROM accounts WHERE status='enabled' ORDER BY last_used_at ASC, id ASC`)
+		 FROM accounts WHERE status='enabled' ORDER BY last_used_at ASC, id ASC LIMIT 1`).
+		Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
+			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount)
 	if err != nil {
 		return nil, false
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var a CookieAccount
-		if err := rows.Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
-			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount); err != nil {
-			continue
-		}
-		if skip[a.ID] {
-			continue
-		}
-		_, _ = getDB().Exec(`UPDATE accounts SET last_used_at=? WHERE id=?`, time.Now().Unix(), a.ID)
-		return &a, true
-	}
-	return nil, false
+	_, _ = getDB().Exec(`UPDATE accounts SET last_used_at=? WHERE id=?`, time.Now().Unix(), a.ID)
+	return &a, true
 }
 
 // markCookieByStatus 按上游返回回写 cookie 健康度。

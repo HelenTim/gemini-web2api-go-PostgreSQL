@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS requests (
     upstream_model  TEXT,
     proxy_id        INTEGER,
     proxy_name      TEXT,
+    account_id      INTEGER,
+    account_label   TEXT,
     status          INTEGER NOT NULL,
     error           TEXT,
     ttfb_ms         INTEGER,
@@ -145,6 +147,9 @@ func getDB() *sql.DB {
 		// Errors are ignored — columns may already be absent.
 		// 老库补上服务端自报的模型名列（列已存在时报错，忽略）
 		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN upstream_model TEXT`)
+		// 老库补上 cookie 归属列（列已存在时报错，忽略）
+		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN account_id INTEGER`)
+		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN account_label TEXT`)
 		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN prompt_preview`)
 		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN response_preview`)
 		db = conn
@@ -162,6 +167,8 @@ type RequestRow struct {
 	UpstreamModel string `json:"upstream_model"`
 	ProxyID       *int64 `json:"proxy_id"`
 	ProxyName     string `json:"proxy_name"`
+	AccountID     *int64 `json:"account_id"`
+	AccountLabel  string `json:"account_label"`
 	Status        int    `json:"status"`
 	Error         string `json:"error"`
 	TTFBMs        *int64 `json:"ttfb_ms"`
@@ -176,11 +183,13 @@ type RequestRow struct {
 
 func insertRequest(r *RequestRow) {
 	_, err := getDB().Exec(`INSERT INTO requests
-        (ts, model, upstream_model, proxy_id, proxy_name, status, error, ttfb_ms, total_ms,
+        (ts, model, upstream_model, proxy_id, proxy_name, account_id, account_label,
+         status, error, ttfb_ms, total_ms,
          prompt_chars, response_chars, prompt_tokens, output_tokens,
          endpoint, stream)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		r.TS, r.Model, r.UpstreamModel, r.ProxyID, r.ProxyName, r.Status, r.Error, r.TTFBMs, r.TotalMs,
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.TS, r.Model, r.UpstreamModel, r.ProxyID, r.ProxyName, r.AccountID, r.AccountLabel,
+		r.Status, r.Error, r.TTFBMs, r.TotalMs,
 		r.PromptChars, r.ResponseChars, r.PromptTokens, r.OutputTokens,
 		r.Endpoint, r.Stream)
 	if err != nil {

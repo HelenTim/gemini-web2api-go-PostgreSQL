@@ -280,6 +280,7 @@ func handleAdminRequests(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 
 	q := `SELECT id, ts, model, IFNULL(upstream_model,''), IFNULL(proxy_id,0), IFNULL(proxy_name,''),
+        IFNULL(account_id,0), IFNULL(account_label,''),
         status, IFNULL(error,''), IFNULL(ttfb_ms,0), total_ms,
         prompt_chars, response_chars, prompt_tokens, output_tokens,
         IFNULL(endpoint,''), stream FROM requests WHERE 1=1`
@@ -305,10 +306,11 @@ func handleAdminRequests(w http.ResponseWriter, r *http.Request) {
 
 	var list []map[string]interface{}
 	for rows.Next() {
-		var id, ts, proxyID, ttfb, totalMs int64
-		var model, upstreamModel, proxyName, errStr, endpoint string
+		var id, ts, proxyID, acctID, ttfb, totalMs int64
+		var model, upstreamModel, proxyName, acctLabel, errStr, endpoint string
 		var status, promptC, respC, promptT, outT, stream int
 		if err := rows.Scan(&id, &ts, &model, &upstreamModel, &proxyID, &proxyName,
+			&acctID, &acctLabel,
 			&status, &errStr, &ttfb, &totalMs,
 			&promptC, &respC, &promptT, &outT,
 			&endpoint, &stream); err != nil {
@@ -321,6 +323,8 @@ func handleAdminRequests(w http.ResponseWriter, r *http.Request) {
 			"upstream_model": upstreamModel,
 			"proxy_id":       proxyID,
 			"proxy_name":     proxyName,
+			"account_id":     acctID,
+			"account_label":  acctLabel,
 			"status":         status,
 			"error":          errStr,
 			"ttfb_ms":        ttfb,

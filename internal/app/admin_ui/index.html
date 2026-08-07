@@ -563,15 +563,16 @@ const pages = {
             <colgroup>
               <col style="width:140px"><col style="width:150px"><col style="width:130px">
               <col style="width:96px"><col style="width:70px"><col style="width:84px">
-              <col style="width:84px"><col style="width:64px"><col style="width:64px"><col>
+              <col style="width:84px"><col style="width:110px"><col style="width:64px">
+              <col style="width:64px"><col>
             </colgroup>
             <thead><tr>
               <th class="nw">时间</th><th class="nw">模型</th><th class="nw">实际模型</th>
-              <th class="nw">出口</th><th class="nw">状态</th>
+              <th class="nw">出口</th><th class="nw">账号</th><th class="nw">状态</th>
               <th class="nw">首字</th><th class="nw">总用时</th>
               <th class="nw">输入</th><th class="nw">输出</th><th>接口</th>
             </tr></thead>
-            <tbody><tr><td colspan="10" class="empty">加载中...</td></tr></tbody>
+            <tbody><tr><td colspan="11" class="empty">加载中...</td></tr></tbody>
           </table>
         </div>
         <div class="pager" id="reqPager"></div>
@@ -846,6 +847,9 @@ async function loadReqs() {
       <td class="truncate" title="${escapeHtml(r.model)}">${escapeHtml(r.model)}</td>
       <td class="nw">${upstreamCell(r)}</td>
       <td class="nw truncate">${r.proxy_name ? escapeHtml(r.proxy_name) : '<span class="badge muted">直连</span>'}</td>
+      <td class="nw truncate" title="${escapeHtml(r.account_label || '')}">${
+        r.account_id ? escapeHtml(r.account_label || ('#' + r.account_id))
+                     : '<span class="badge muted">匿名</span>'}</td>
       <td class="nw">${r.status === 200 ? '<span class="badge ok">200</span>' : '<span class="badge fail">' + r.status + '</span>'}</td>
       <td class="num nw">${fmt.ms(r.ttfb_ms)}</td>
       <td class="num nw">${fmt.ms(r.total_ms)}</td>
@@ -855,7 +859,7 @@ async function loadReqs() {
         ${r.error ? '<div class="pre clamp2" style="color:var(--fail);margin-top:4px" title="'
           + escapeHtml(r.error) + '"><b>错误：</b>' + escapeHtml(r.error) + '</div>' : ''}
       </td>
-    </tr>`).join('') || '<tr><td colspan="10" class="empty">还没有请求记录</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="11" class="empty">还没有请求记录</td></tr>';
   const size = reqPageSize();
   const total = data.total || 0;
   const page = Math.floor(reqOffset / size) + 1;
