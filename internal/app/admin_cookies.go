@@ -120,6 +120,22 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
 		logf("[cookies] 删除账号 #%d", id)
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	case http.MethodPost:
+		if action == "rotate" {
+			for _, a := range accountList() {
+				if a.ID == id {
+					iv, err := rotateAccount(a)
+					if err != nil {
+						writeJSON(w, 200, map[string]interface{}{"ok": false, "detail": err.Error()})
+						return
+					}
+					writeJSON(w, 200, map[string]interface{}{
+						"ok": true, "detail": "保活成功", "next_sec": int(iv.Seconds())})
+					return
+				}
+			}
+			writeJSON(w, 404, map[string]string{"error": "account not found"})
+			return
+		}
 		if action == "check" {
 			for _, a := range accountList() {
 				if a.ID == id {

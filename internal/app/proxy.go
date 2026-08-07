@@ -461,3 +461,18 @@ func proxyUsableByID(id int64) bool {
 	}
 	return false
 }
+
+// proxyURLByID 按 id 取代理 URL，找不到返回空串（直连）。
+func proxyURLByID(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	for _, p := range proxyCache {
+		if p.ID == id {
+			return p.URL
+		}
+	}
+	return ""
+}

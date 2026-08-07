@@ -683,6 +683,7 @@ const pages = {
                 <td class="nw">
                   <span class="actions">
                     <button class="btn muted" onclick="checkCookieAcct(${a.id}, this)">检测</button>
+                    <button class="btn muted" onclick="rotateCookieAcct(${a.id}, this)">保活</button>
                     <button class="btn muted" onclick="toggleCookieAcct(${a.id})">${a.status === 'enabled' ? '禁用' : '启用'}</button>
                     <button class="btn muted" onclick="editCookieAcct(${a.id}, ${JSON.stringify(a.label || '').replace(/"/g, '&quot;')}, ${JSON.stringify(a.note || '').replace(/"/g, '&quot;')})">编辑</button>
                     <button class="btn danger" onclick="delCookieAcct(${a.id})">删除</button>
@@ -1297,6 +1298,21 @@ async function checkCookieAcct(id, btn) {
   } finally {
     btn.textContent = old; btn.disabled = false;
   }
+}
+
+// 手动触发一次会话保活。后台每 10 分钟自动跑一次，这个按钮用来当场验证。
+async function rotateCookieAcct(id, btn) {
+  const old = btn.textContent;
+  btn.textContent = '…'; btn.disabled = true;
+  try {
+    const r = await fetch('/admin/api/cookies/' + id + '/rotate',
+      { method: 'POST', credentials: 'include' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { flash('保活失败：' + (d.error || r.status)); return; }
+    flash((d.ok ? '✓ #' + id + ' ' : '✗ #' + id + ' ') + (d.detail || '') +
+          (d.next_sec ? `，服务端建议 ${d.next_sec}s 后再来` : ''));
+    await refreshPage();
+  } finally { btn.textContent = old; btn.disabled = false; }
 }
 
 async function toggleCookieAcct(id) {
