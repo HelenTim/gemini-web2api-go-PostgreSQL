@@ -325,7 +325,9 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, files []file
 		prompt, files = p, f
 	}
 	if budget > 0 && len(prompt) > budget {
-		return attrib(&PromptTooLongError{Bytes: len(prompt), Budget: budget})
+		return attrib(&PromptTooLongError{
+			Bytes: len(prompt), Budget: budget, HasCookie: cookieStr != "",
+		})
 	}
 
 	inner := make([]interface{}, 80)

@@ -49,12 +49,26 @@ func TestPromptOverLimitErrors(t *testing.T) {
 	if len(prompt) <= 20000 {
 		t.Fatalf("测试用例本身没超预算（%d 字节）", len(prompt))
 	}
-	err := error(&PromptTooLongError{Bytes: len(prompt), Budget: 20000})
 	// 错误信息要说清为什么被拒，否则用户只会以为是我们坏了
-	for _, want := range []string{"truncates", "latest message", "Shorten", "not tokens"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("错误信息缺少 %q: %v", want, err)
+	noCookie := error(&PromptTooLongError{Bytes: len(prompt), Budget: 20000})
+	for _, want := range []string{"truncates", "latest message", "not tokens"} {
+		if !strings.Contains(noCookie.Error(), want) {
+			t.Errorf("错误信息缺少 %q: %v", want, noCookie)
 		}
+	}
+	// 没 cookie 时这不是死路，要告诉用户导一个进来就能走附件
+	for _, want := range []string{"Cookie pool", "attachment"} {
+		if !strings.Contains(noCookie.Error(), want) {
+			t.Errorf("没 cookie 时该提示导入 cookie，缺 %q: %v", want, noCookie)
+		}
+	}
+	// 有 cookie 却还超 = 附件那条路也没救回来，就别再让人去导 cookie 了
+	withCookie := error(&PromptTooLongError{Bytes: len(prompt), Budget: 20000, HasCookie: true})
+	if strings.Contains(withCookie.Error(), "Cookie pool") {
+		t.Error("已经有 cookie 了还提示去导 cookie")
+	}
+	if !strings.Contains(withCookie.Error(), "Shorten") {
+		t.Error("有 cookie 时该提示压缩内容")
 	}
 }
 

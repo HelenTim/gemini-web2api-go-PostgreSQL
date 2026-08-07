@@ -355,14 +355,22 @@ func parseToolChoice(tc interface{}) (string, string) {
 // 对话里引用会被服务端回 1100 拒绝），所以现在只能报错。
 type PromptTooLongError struct {
 	Bytes, Budget int
+	HasCookie     bool // 有 cookie 却还超，说明附件那条路也没救回来
 }
 
 func (e *PromptTooLongError) Error() string {
-	return fmt.Sprintf(
+	base := fmt.Sprintf(
 		"prompt is %d bytes, over the %d-byte per-request limit of the Gemini web "+
 			"protocol (the limit is on UTF-8 bytes, not tokens). The upstream silently "+
 			"truncates from the end, which would drop your latest message and produce an "+
-			"unrelated answer, so this request is rejected instead. Shorten the "+
-			"conversation, the system prompt, or the tool definitions.",
+			"unrelated answer, so this request is rejected instead.",
 		e.Bytes, e.Budget)
+	if !e.HasCookie {
+		// 没 cookie 时这不是死路：导一个进来就能走附件，长度限制基本就没了。
+		// 不说这句的话用户只会以为"这项目撑不住长上下文"。
+		return base + " Add a Google account cookie in the admin panel (Cookie pool) — " +
+			"with one configured, oversized conversations are uploaded as a text " +
+			"attachment instead and this limit largely goes away."
+	}
+	return base + " Shorten the conversation, the system prompt, or the tool definitions."
 }
