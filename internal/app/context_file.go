@@ -2,10 +2,7 @@ package app
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // 超长对话转文本附件。
@@ -16,14 +13,20 @@ import (
 //
 // 只有挂了 cookie 才行：匿名能把文件传上去，但在对话里引用会被服务端回 1100。
 //
-// **附件也不是无限的：服务端只读它的前约 16 万字节。** 判据是总量固定 260,417
-// 字节、只挪暗号的绝对偏移 —— 157,833 处读得到（3/3），163,371 处读不到（0/3）；
-// 同一份总量下 60,918 和 121,836 都读得到，说明决定成败的是偏移不是总量。
-// 手工在网页端传一份 20MB、七处埋暗号的文件，浏览器自己也只认出 0% 那一个，
-// 跟这个结论一致。
+// **附件不是无限的：模型实际能看到的内容合计约 16 万字节。** 判据是总量固定
+// 260,417 字节、只挪暗号的绝对偏移 —— 121,836 处读得到、157,833 处读得到（3/3）、
+// 163,371 处读不到（0/3）。
 //
-// 所以附件把可用长度从 13 万提到约 16 万，是有限的改善：超出部分传上去了，
-// 但模型看不到。真要更长得另想办法。
+// 这是**总预算**，不是每份附件各有额度：切成 7 份 10KB 的小文件后，第 3 份和第 5 份
+// 里的内容照样读得到，说明后面的附件确实被读；但把 260KB 切成 2 份 150KB，第 2 份里
+// 偏移 182K 处的内容仍然读不到。所以切分不解决问题，只是多传几次，已撤掉。
+//
+// 排除过的解释：不是异步摄取没跟上（上传后等 10 秒再引用，结果一样）；不是提问方式
+// 太弱（换三种指令，包括明确要求"从头到尾完整读一遍"，同样读不到）。
+//
+// 所以附件把可用长度从 13 万提到约 16 万 —— 它拆掉的是**请求体大小**那堵墙，
+// 紧接着就撞上**上下文总量**这堵墙。改善有限但真实，而且这段是我们可控的：
+// 超了明确报错，不像内联那样被上游静默截断。
 
 // contextFileName 是历史附件在模型那边显示的文件名，指令里会引用它。
 const contextFileName = "message.txt"
@@ -85,20 +88,7 @@ func prepareContextFile(prompt, latest string, budget int, cookie, proxyURL stri
 	if err != nil {
 		return prompt, nil, false, fmt.Errorf("超长对话转附件失败: %w", err)
 	}
-	uploadSettleDelay()
 	logf("[context] prompt %d 字节超过 %d，已转成附件 %s", len(prompt), budget, contextFileName)
 	files := []fileRef{{Ref: ref, Name: contextFileName, Kind: 3, Mime: "text/plain"}}
 	return contextFilePrompt(latest, budget), files, true, nil
-}
-
-// uploadSettleDelay 上传完等一会儿再引用。
-//
-// 排查用的临时开关：怀疑服务端是异步摄取附件的 —— 浏览器里用户选完文件要过几秒
-// 才发送，而我们上传完毫秒级就引用，模型可能只看到已处理完的那一段。
-// 设 GW2A_UPLOAD_DELAY_MS 打开。
-func uploadSettleDelay() {
-	ms, _ := strconv.Atoi(os.Getenv("GW2A_UPLOAD_DELAY_MS"))
-	if ms > 0 {
-		time.Sleep(time.Duration(ms) * time.Millisecond)
-	}
 }
