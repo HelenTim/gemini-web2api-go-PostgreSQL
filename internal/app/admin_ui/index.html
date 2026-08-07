@@ -326,6 +326,30 @@
   .modal-body { margin: 14px 0 18px; }
   .modal-err { color: var(--fail); font-size: 12.5px; margin-bottom: 10px; }
 
+  /* ── 分段切换（导入 Cookie 的两种填法）────────────────────────────────
+     两种填法各有各的场景：逐项适合照着 DevTools 一条条抄，整串适合已经有
+     "k=v; k=v" 现成串的。做成 tab 而不是两个入口，是因为切换时数据要互相
+     带过去——否则填一半换个模式就白填了。 */
+  .segbar { display: inline-flex; background: var(--bg); border-radius: 999px;
+            padding: 3px; gap: 2px; margin-bottom: 14px; }
+  .segbar button { border: none; background: transparent; cursor: pointer;
+                   font: inherit; font-size: 12.5px; color: var(--muted);
+                   padding: 6px 14px; border-radius: 999px; transition: all .15s; }
+  .segbar button.on { background: var(--card); color: var(--fg);
+                      box-shadow: 0 1px 3px rgba(60,64,67,.16); }
+  .ck-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+             gap: 10px 12px; }
+  .ck-grid .field { margin-bottom: 0; }
+  .ck-grid .field.wide { grid-column: 1 / -1; }
+  .ck-grid label { display: block; font-size: 11.5px; color: var(--muted);
+                   margin-bottom: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ck-grid label .req { color: var(--fail); }
+  .ck-grid input { width: 100%; font-family: var(--mono); font-size: 12px;
+                   text-overflow: ellipsis; }
+  .ck-extra { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
+  /* 逐项模式列了 7 个框，窄屏下别把弹窗撑爆 */
+  .modal.wide { width: min(620px, 94vw); }
+
   @media (max-width: 1100px) { .grid-main { grid-template-columns: 1fr; } }
   @media (max-width: 900px) {
     #app { flex-direction: column; }
@@ -1083,30 +1107,134 @@ async function resetProxy(id) {
 }
 // Cookie 池 ────────────────────────────────────────────────────────────────
 
+// 逐项模式列出的 cookie。顺序按"从 DevTools 里找的难易"排，不是字母序。
+// req 只标 SAPISID：后端也只强制这一项（要用它算 SAPISIDHASH 授权头），
+// 其余缺了不一定不能用，标成必填会把能用的号挡在外面。
+const COOKIE_KEYS = [
+  { k: '__Secure-1PSID', hint: '主会话' },
+  { k: 'SAPISID', req: true, hint: '算授权头用，缺了会被当匿名' },
+  { k: 'SID' }, { k: 'HSID' }, { k: 'SSID' }, { k: 'APISID' },
+  { k: '__Secure-1PSIDTS', hint: '可选，缺了无法长期续命' },
+];
+
+// 把 "k=v; k=v" 拆成对象。值里可能含 '='（base64 补位），所以只在第一个等号处切。
+function parseCookieStr(s) {
+  const out = {};
+  (s || '').split(';').forEach(p => {
+    const t = p.trim();
+    const i = t.indexOf('=');
+    if (i > 0) out[t.slice(0, i)] = t.slice(i + 1);
+  });
+  return out;
+}
+
+function joinCookieObj(obj) {
+  return Object.entries(obj).filter(([, v]) => (v || '').trim())
+    .map(([k, v]) => `${k}=${String(v).trim()}`).join('; ');
+}
+
 async function addCookieAcct() {
+  // 两个模式共用这一份状态，切 tab 时互相带过去。extras 存的是不在
+  // COOKIE_KEYS 里的项——整串粘贴进来的 cookie 往往还带一堆别的，
+  // 切到逐项再切回去不能把它们弄丢。
+  let extras = {};
+
   const data = await buildModal({
     title: '导入 Cookie',
-    desc: '粘贴 gemini.google.com 下的完整 cookie 串（浏览器 F12 → Application → Cookies → 全选复制，或用抓包导出的 "k=v; k=v" 一行）。',
+    wide: true,
+    desc: '浏览器 F12 → Application → Cookies → 选 <code>https://gemini.google.com</code>。逐项抄或整串粘贴都行，两种填法可随时切换，已填的内容会带过去。',
     bodyHTML: `
       <div class="field">
         <label>标签</label>
         <input data-name="label" type="text" placeholder="例如账号邮箱，可留空" />
         <div class="hint">仅用于面板里区分账号，不参与请求。</div>
       </div>
-      <div class="field">
-        <label>Cookie *</label>
-        <textarea data-name="cookie" rows="5" placeholder="SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=...; __Secure-1PSIDTS=..."></textarea>
-        <div class="hint">至少要含 SAPISID。缺 __Secure-1PSIDTS 也能用，但无法长期续命。</div>
+
+      <div class="segbar" data-role="seg">
+        <button type="button" data-mode="fields" class="on">逐项填写</button>
+        <button type="button" data-mode="raw">整串粘贴</button>
       </div>
-      <div class="field">
+
+      <div data-pane="fields">
+        <div class="ck-grid">
+          ${COOKIE_KEYS.map(c => `
+            <div class="field${c.k.length > 12 ? ' wide' : ''}">
+              <label>${escapeHtml(c.k)}${c.req ? ' <span class="req">*</span>' : ''}</label>
+              <input data-ck="${escapeHtml(c.k)}" type="text" autocomplete="off" spellcheck="false"
+                     placeholder="${escapeHtml(c.hint || '')}" />
+            </div>`).join('')}
+        </div>
+        <div class="ck-extra" data-role="extras"></div>
+      </div>
+
+      <div data-pane="raw" style="display:none;">
+        <div class="field">
+          <textarea data-name="cookie" rows="6" spellcheck="false"
+            placeholder="SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=..."></textarea>
+          <div class="hint">整行粘贴，分号分隔。至少要含 SAPISID。</div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:14px;">
         <label>备注</label>
         <input data-name="note" type="text" placeholder="可留空" />
       </div>`,
     submitText: '导入',
+    onReady: (overlay) => {
+      const $ = (s) => overlay.querySelector(s);
+      const inputs = () => [...overlay.querySelectorAll('[data-ck]')];
+      const ta = $('[data-name=cookie]');
+
+      const fieldsToRaw = () => {
+        const obj = {};
+        inputs().forEach(el => { if (el.value.trim()) obj[el.dataset.ck] = el.value.trim(); });
+        ta.value = joinCookieObj({ ...obj, ...extras });
+      };
+      const rawToFields = () => {
+        const obj = parseCookieStr(ta.value);
+        const known = new Set(COOKIE_KEYS.map(c => c.k));
+        extras = {};
+        Object.entries(obj).forEach(([k, v]) => { if (!known.has(k)) extras[k] = v; });
+        inputs().forEach(el => { el.value = obj[el.dataset.ck] || ''; });
+        const n = Object.keys(extras).length;
+        $('[data-role=extras]').textContent = n
+          ? `另有 ${n} 项未在上面列出（${Object.keys(extras).slice(0, 4).join(', ')}${n > 4 ? ' …' : ''}），会一并保留。`
+          : '';
+      };
+
+      overlay.querySelectorAll('[data-role=seg] button').forEach(btn => {
+        btn.onclick = () => {
+          const mode = btn.dataset.mode;
+          if (mode === 'raw') fieldsToRaw(); else rawToFields();
+          overlay.querySelectorAll('[data-role=seg] button')
+            .forEach(b => b.classList.toggle('on', b === btn));
+          $('[data-pane=fields]').style.display = mode === 'fields' ? '' : 'none';
+          $('[data-pane=raw]').style.display = mode === 'raw' ? '' : 'none';
+        };
+      });
+      // 在逐项模式里直接粘贴一整串时自动拆开，省得用户先去切 tab
+      inputs().forEach(el => el.addEventListener('paste', (ev) => {
+        const txt = (ev.clipboardData || window.clipboardData).getData('text') || '';
+        if (!txt.includes(';') || !txt.includes('=')) return;
+        ev.preventDefault();
+        ta.value = txt.trim();
+        rawToFields();
+      }));
+    },
     onSubmit: (overlay) => {
       const label = (overlay.querySelector('[data-name=label]').value || '').trim();
-      const cookie = (overlay.querySelector('[data-name=cookie]').value || '').trim();
       const note = (overlay.querySelector('[data-name=note]').value || '').trim();
+      const isRaw = overlay.querySelector('[data-role=seg] button.on').dataset.mode === 'raw';
+      let cookie;
+      if (isRaw) {
+        cookie = (overlay.querySelector('[data-name=cookie]').value || '').trim();
+      } else {
+        const obj = {};
+        overlay.querySelectorAll('[data-ck]').forEach(el => {
+          if (el.value.trim()) obj[el.dataset.ck] = el.value.trim();
+        });
+        cookie = joinCookieObj(obj);
+      }
       if (!cookie) return { error: 'Cookie 不能为空' };
       if (!cookie.includes('SAPISID')) return { error: 'cookie 里没有 SAPISID，多半没复制全' };
       return { label, cookie, note };
@@ -1295,12 +1423,12 @@ function flash(msg) {
 //   modalForm({ title, desc, fields: [{name,label,...}], submitText })
 //                                                            -> obj|null
 
-function buildModal({ title, desc, bodyHTML, submitText, danger, allowEnter, onSubmit }) {
+function buildModal({ title, desc, bodyHTML, submitText, danger, wide, allowEnter, onReady, onSubmit }) {
   return new Promise(resolve => {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-      <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal${wide ? ' wide' : ''}" role="dialog" aria-modal="true">
         ${title ? `<h3>${escapeHtml(title)}</h3>` : ''}
         ${desc ? `<div class="desc">${desc}</div>` : ''}
         <div class="modal-err" style="display:none;"></div>
@@ -1311,6 +1439,9 @@ function buildModal({ title, desc, bodyHTML, submitText, danger, allowEnter, onS
         </div>
       </div>`;
     document.body.appendChild(overlay);
+    // 弹窗挂上 DOM 之后再交给调用方接事件——内容是 innerHTML 灌进去的，
+    // 早于这一步拿不到里面的节点。
+    if (onReady) onReady(overlay);
 
     const finish = (val) => {
       overlay.remove();
