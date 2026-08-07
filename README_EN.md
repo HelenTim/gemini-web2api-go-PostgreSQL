@@ -185,6 +185,8 @@ There is also an unauthenticated health check at `GET /` returning `{"status":"o
 
 The frontend is a single HTML file and Chart.js is embedded in the binary, **not loaded from a CDN**, so the panel also works on air-gapped or intranet deployments.
 
+**Serving it under a path prefix needs no extra configuration**: every URL in the panel is relative, so forwarding `https://example.com/gemini/` to this service's `/` is enough to open `https://example.com/gemini/admin`. (Requesting `/admin` without the trailing slash 301s to `admin/` — relative URLs resolve against the document URL's *directory*, and the two forms differ by one level, so they have to be normalised first.)
+
 ## Models
 
 Gemini's backend only recognises three models (the list comes from `batchexecute?rpcids=otAQ7b`):

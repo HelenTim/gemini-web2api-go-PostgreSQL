@@ -182,6 +182,11 @@ OpenAI 形状的接口，没做 `/v1beta`。
 
 面板前端是单个 HTML，Chart.js 随二进制 embed，**不走 CDN**——内网/离线部署也能开。
 
+**反代到子路径不用额外配置**：面板里的地址全是相对的，把 `https://example.com/gemini/`
+转发到本服务的 `/` 就能用 `https://example.com/gemini/admin` 打开。（访问不带尾斜杠的
+`/admin` 会 301 到 `admin/`——相对地址按文档 URL 的目录解析，两种形式差一层，统一一下
+才不会解析错。）
+
 ## 模型
 
 Gemini 网页端服务端只认三个模型（清单来自 `batchexecute?rpcids=otAQ7b`）：

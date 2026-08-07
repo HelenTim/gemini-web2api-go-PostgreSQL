@@ -2,6 +2,22 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 4.1.1
+
+### 修复
+
+- **面板反代到子路径下打不开**（比如 `example.com/gemini/admin`）。`index.html` 里
+  30 处地址都是绝对的，浏览器按站点根解析，全落到 `example.com/admin/api/…`，前缀
+  丢了。现在改成相对地址。
+
+  顺带说清一个坑：**光改成相对地址不够**。相对地址是按文档 URL 的**目录**解析的，
+  而 `/admin` 和 `/admin/` 的目录差一层——`api/stats` 在 `/gemini/admin/` 下解析成
+  `/gemini/admin/api/stats`（对），在 `/gemini/admin` 下解析成 `/gemini/api/stats`
+  （错）。所以服务端会把 `/admin` 301 到 `admin/`，把文档 URL 统一到带斜杠的形式。
+  Location 用的是**相对值**——写成 `/admin/` 的话浏览器会跳到站点根，前缀又丢了。
+
+  反代不需要任何额外配置，把 `/前缀/` 转发到本服务的 `/` 即可。
+
 ## 4.1.0
 
 ### ⚠️ 破坏性变更
