@@ -238,7 +238,14 @@ func poolHasProxyURL(url string) bool {
 //
 // 跟旧的 pickProxy 区别：会问 trySlotAcquire 看 slot 是否有容量；
 // 调用方拿到的 slot 必须配套调 slotRelease(proxy.ID)。
-func pickProxyWithCapacity() (Proxy, bool) {
+func pickProxyWithCapacity() (Proxy, bool) { return pickProxyPreferring(0) }
+
+// pickProxyPreferring 优先挑 preferID 那个出口，它不可用或没容量时才轮询别的。
+//
+// 为什么要粘住：cookie 池和代理池各自独立轮转的话，同一个 Google 账号会在几十个
+// 出口 IP 之间来回跳 —— 这在 Google 眼里正是账号共享的特征。粘不住时宁可换出口
+// 也不排队等，可用性优先。
+func pickProxyPreferring(preferID int64) (Proxy, bool) {
 	proxyMu.RLock()
 	defer proxyMu.RUnlock()
 	if len(proxyCache) == 0 {
@@ -254,6 +261,16 @@ func pickProxyWithCapacity() (Proxy, bool) {
 	}
 	if len(pool) == 0 {
 		return Proxy{}, false
+	}
+	if preferID > 0 {
+		for _, p := range pool {
+			if p.ID == preferID {
+				if ok, _ := trySlotAcquire(p.ID); ok {
+					return p, true
+				}
+				break // 绑的那个满了，往下走正常轮询
+			}
+		}
 	}
 	// 从轮询起点开始,找第一个 slot 没满的
 	start := atomic.AddUint64(&proxyCursor, 1) - 1
@@ -410,4 +427,19 @@ func joinComma(parts []string) string {
 		out += p
 	}
 	return out
+}
+
+// proxyNameByID 按 id 找代理名，找不到返回空串（0 = 还没绑 / 直连）。
+func proxyNameByID(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	for _, p := range proxyCache {
+		if p.ID == id {
+			return p.Name
+		}
+	}
+	return ""
 }

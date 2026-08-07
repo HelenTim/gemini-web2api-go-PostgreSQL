@@ -133,22 +133,22 @@ func getStdlibClient(proxyURL string) *http.Client {
 }
 
 // loadCookie reads the cookie file (Netscape one-line format or JSON).
-// loadCookie 返回 (cookie 串, SAPISID, 账号 ID, 账号显示名)。
+// loadCookie 返回 (cookie 串, SAPISID, 账号 ID, 账号显示名, 该账号绑定的出口 ID)。
 //
 // cookie 只有 cookie 池一个来源：挑一个 enabled 账号（最久未用优先，自动轮转
 // 分散单 IP 上限）。池空 = 匿名。原来那条「池空回落单 cookie」的路径已经取消，
 // 它的值在启动时被 seedCookiesFromConfig 并进池子了。
 //
 // 第三个返回值是池里那条记录的 ID，请求结束后拿它调 markCookieByStatus 回写健康度。
-func loadCookie() (cookie, sapisid string, id int64, label string) {
+func loadCookie() (cookie, sapisid string, id int64, label string, proxyID int64) {
 	if a, ok := pickCookieAccount(); ok {
 		name := a.Label
 		if name == "" {
 			name = fmt.Sprintf("#%d", a.ID)
 		}
-		return a.Cookie, extractSAPISID(a.Cookie), a.ID, name
+		return a.Cookie, extractSAPISID(a.Cookie), a.ID, name, a.ProxyID
 	}
-	return "", "", 0, ""
+	return "", "", 0, "", 0
 }
 
 func makeSAPISIDHash(sapisid string) string {

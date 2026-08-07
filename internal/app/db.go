@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_used_at  INTEGER NOT NULL DEFAULT 0,     -- 上次被挑中发请求的时刻
     last_ok_at    INTEGER NOT NULL DEFAULT 0,     -- 上次请求成功的时刻
     last_error    TEXT NOT NULL DEFAULT '',
-    fail_count    INTEGER NOT NULL DEFAULT 0      -- 连续失败次数（成功归零）
+    fail_count    INTEGER NOT NULL DEFAULT 0,     -- 连续失败次数（成功归零）
+    proxy_id      INTEGER NOT NULL DEFAULT 0      -- 绑定的出口，0 = 还没绑
 );
 CREATE INDEX IF NOT EXISTS idx_accounts_pick ON accounts(status, last_used_at);
 `
@@ -150,6 +151,8 @@ func getDB() *sql.DB {
 		// 老库补上 cookie 归属列（列已存在时报错，忽略）
 		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN account_id INTEGER`)
 		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN account_label TEXT`)
+		// 老库补上账号↔出口绑定列
+		_, _ = conn.Exec(`ALTER TABLE accounts ADD COLUMN proxy_id INTEGER NOT NULL DEFAULT 0`)
 		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN prompt_preview`)
 		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN response_preview`)
 		db = conn

@@ -48,6 +48,8 @@ func cookieAcctView(a CookieAccount) map[string]interface{} {
 		"key_cookies":  key,
 		"sapisid_tail": tail,
 		"has_1psidts":  nameSet["__Secure-1PSIDTS"],
+		"proxy_id":     a.ProxyID,
+		"proxy_name":   proxyNameByID(a.ProxyID),
 	}
 }
 

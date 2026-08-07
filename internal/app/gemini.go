@@ -139,14 +139,14 @@ func (e *RateLimitError) Error() string {
 // 全满返回 *RateLimitError。
 //
 // 调用方拿到 (proxy, ok=true) 必须配 deferred releaseSlot()。
-func acquireSlot() (Proxy, bool, error) {
+func acquireSlot(preferProxyID int64) (Proxy, bool, error) {
 	// 1. 先试代理池（如果配了）
 	proxyMu.RLock()
 	hasProxies := len(proxyCache) > 0
 	proxyMu.RUnlock()
 
 	if hasProxies {
-		if p, ok := pickProxyWithCapacity(); ok {
+		if p, ok := pickProxyPreferring(preferProxyID); ok {
 			return p, true, nil
 		}
 		// 代理池里有代理但一个都用不上（限流满 / 全禁用 / 全熔断且没过冷却）。
@@ -237,7 +237,7 @@ func streamGenerate(prompt string, mc ModelConfig,
 		return nil, err
 	}
 
-	cookieStr, sapisid, cookieID, cookieLabel := loadCookie()
+	cookieStr, sapisid, cookieID, cookieLabel, preferProxy := loadCookie()
 
 	// 带 cookie 时必须多发一个表单字段 at（XSRF token），否则上游直接 400。
 	// 匿名请求不需要，getXSRF 对空 cookie 返回空串。见 xsrf.go。
@@ -251,14 +251,24 @@ func streamGenerate(prompt string, mc ModelConfig,
 	}
 
 	// 出错时也要把「用了哪个号 / 哪个出口」带回去，否则失败记录里全是空白。
+	// picked 是拿到 slot 之后才填的，闭包捕获它，后面每次 attrib 都带上当时的出口。
+	var picked Proxy
 	attrib := func(err error) (*StreamResult, error) {
-		return &StreamResult{AccountID: cookieID, AccountLabel: cookieLabel}, err
+		return &StreamResult{
+			AccountID: cookieID, AccountLabel: cookieLabel,
+			ProxyID: picked.ID, ProxyName: picked.Name,
+		}, err
 	}
 
 	// 通过限流器拿一个 slot（代理或直连）。所有 slot 满 → 直接 429。
-	picked, slotOK, slotErr := acquireSlot()
+	p, slotOK, slotErr := acquireSlot(preferProxy)
 	if !slotOK {
 		return attrib(slotErr)
+	}
+	picked = p
+	// 记住这次用的出口，下次这个账号优先复用同一个
+	if picked.ID != preferProxy {
+		bindAccountProxy(cookieID, picked.ID)
 	}
 	defer releaseSlot(picked.ID) // picked.ID=0 表示直连 slot
 
@@ -412,9 +422,7 @@ func streamGenerate(prompt string, mc ModelConfig,
 	if lastErr != nil {
 		markCookieByStatus(cookieID, lastStatus, lastErr.Error())
 	}
-	r, err := attrib(lastErr)
-	r.ProxyID, r.ProxyName = picked.ID, picked.Name
-	return r, err
+	return attrib(lastErr)
 }
 
 // upstreamModelRe 匹配响应帧里服务端自报的模型显示名（帧的 [42] 位）。
@@ -744,7 +752,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 
 	// probe 是旁路探测，不回写 cookie 健康度：它的失败原因跟 cookie 无关。
 	// 但 at 必须带——否则挂了 cookie 之后连通性探测会一直报 400，假报故障。
-	cookieStr, sapisid, _, _ := loadCookie()
+	cookieStr, sapisid, _, _, _ := loadCookie()
 	if tok, e := getXSRF(cookieStr, proxyURL); e == nil && tok != "" {
 		form.Set("at", tok)
 		body = form.Encode()

@@ -22,6 +22,7 @@ type CookieAccount struct {
 	LastOkAt   int64  `json:"last_ok_at"`
 	LastError  string `json:"last_error"`
 	FailCount  int64  `json:"fail_count"`
+	ProxyID    int64  `json:"proxy_id"` // 绑定的出口，0 = 还没绑
 }
 
 // splitCookiePairs 把 "k=v; k=v" 拆成键值对。
@@ -113,7 +114,7 @@ func accountInsert(label, cookie, note string) (int64, error) {
 // accountList 返回池里全部账号，按 id 升序。
 func accountList() []CookieAccount {
 	rows, err := getDB().Query(
-		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count
+		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count, proxy_id
 		 FROM accounts ORDER BY id`)
 	if err != nil {
 		return nil
@@ -123,7 +124,7 @@ func accountList() []CookieAccount {
 	for rows.Next() {
 		var a CookieAccount
 		if err := rows.Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
-			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount); err != nil {
+			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount, &a.ProxyID); err != nil {
 			continue
 		}
 		out = append(out, a)
@@ -355,10 +356,10 @@ func poolHasCookie(cookie string) bool {
 func pickCookieAccount() (*CookieAccount, bool) {
 	var a CookieAccount
 	err := getDB().QueryRow(
-		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count
+		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count, proxy_id
 		 FROM accounts WHERE status='enabled' ORDER BY last_used_at ASC, id ASC LIMIT 1`).
 		Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
-			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount)
+			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount, &a.ProxyID)
 	if err != nil {
 		return nil, false
 	}
@@ -424,7 +425,7 @@ type CookieCheck struct {
 // 只抓页面，不发对话，不消耗生成配额。
 func checkAccountCookie(a CookieAccount) CookieCheck {
 	t0 := time.Now()
-	picked, ok, err := acquireSlot()
+	picked, ok, err := acquireSlot(a.ProxyID)
 	if !ok {
 		return CookieCheck{Detail: "拿不到出口：" + err.Error()}
 	}
@@ -464,4 +465,12 @@ func explainCookieFailure(err error) string {
 	default:
 		return "检测失败：" + msg
 	}
+}
+
+// bindAccountProxy 记住这个账号这次用的出口，下次优先复用。
+func bindAccountProxy(accountID, proxyID int64) {
+	if accountID <= 0 {
+		return
+	}
+	_, _ = getDB().Exec(`UPDATE accounts SET proxy_id=? WHERE id=?`, proxyID, accountID)
 }
