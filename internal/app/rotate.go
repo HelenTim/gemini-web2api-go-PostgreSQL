@@ -14,12 +14,20 @@ import (
 
 // 会话保活。
 //
-// 浏览器每 10 分钟往 accounts.google.com/RotateCookies 打一次。抓包里 13 次调用
-// **没有一次返回 Set-Cookie** —— 它不换 cookie 值，是纯服务端保活；响应体
+// 浏览器每 10 分钟往 accounts.google.com/RotateCookies 打一次，响应体
 // [["identity.hfcr",600],["di",N]] 里的 600 就是服务端指定的下次间隔。
 //
-// 真正让 cookie 保持新鲜的是普通响应里的 *SIDCC 刷新（见 mergeSetCookie），
-// 这里是另一半：不打这个 ping，服务端那边的会话状态照样会过期。
+// 它**会**返回 Set-Cookie，刷新 SIDCC / __Secure-1PSIDCC / __Secure-3PSIDCC 三项
+// （两份抓包 12 次里 9 次、15 次里 14 次），跟普通响应刷的是同一组，所以这里也要
+// 走 mergeSetCookie。整份抓包里没有任何响应重设过 __Secure-1PSIDTS。
+//
+// 注意：这条结论一开始记反了（记成"一次都没有 Set-Cookie，是纯服务端保活"），
+// 因为读了 CDP 抓包的 responseHeaders —— set-cookie 只出现在 wireResponseHeaders，
+// 前者恒为 0 条。改这里之前先读 docs/local/capture-reading.md。
+//
+// 保活能不能延长账号寿命**没有验证到**：同一来源的 cookie，带续期+保活的活了 86
+// 分钟，两者都没有的活了 114 分钟，n=3 且都是从抓包里抽出来、跟真实浏览器共用同一
+// 个会话。所以这里只声明"跟浏览器行为一致"，不声明"号能活更久"。
 
 const (
 	rotatePageURL = "https://accounts.google.com/RotateCookiesPage" +
