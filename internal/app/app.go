@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -188,9 +189,34 @@ func Run() {
 		rtCfg().PerIPConcurrent, rtCfg().PerIPRPM, rtCfg().PerIPRPH)
 	fmt.Printf("  Retry:       %dx / %ds\n", rtCfg().RetryAttempts, rtCfg().RetryDelaySec)
 	fmt.Println()
+	warnEnvProxyIgnored()
 
 	if err := server.ListenAndServe(); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// warnEnvProxyIgnored 在设了代理环境变量、但代理池是空的时候提醒一句。
+//
+// Linux 上的惯例是 HTTP 客户端自动读 HTTP_PROXY / ALL_PROXY（Go 标准库有现成的
+// http.ProxyFromEnvironment），我们用的是显式 http.ProxyURL，一个都不读。这是
+// 有意的：宿主机上随手一个 export 会悄悄改变出口 IP，而面板仍显示直连，排查时
+// 会被带偏。但"没生效且毫无反馈"同样难查 —— 有用户按 systemd drop-in 的常规做法
+// 注入了这几个变量，折腾很久才发现要在面板配。所以不读归不读，得说一声。
+func warnEnvProxyIgnored() {
+	// 大小写两种写法都查，但只报一个名字：Windows 的环境变量大小写不敏感，
+	// 全列出来会变成 "HTTPS_PROXY / https_proxy" 这种看着像两个变量的噪音。
+	var set []string
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		if os.Getenv(k) != "" || os.Getenv(strings.ToLower(k)) != "" {
+			set = append(set, k)
+		}
+	}
+	if len(set) == 0 || len(listProxies()) > 0 {
+		return
+	}
+	fmt.Printf("  ⚠ 检测到代理环境变量 %s，但本程序**不读**它们，当前走直连。\n"+
+		"    请在面板「代理池」添加，或用 --proxy 启动参数（它会在启动时导入代理池）。\n\n",
+		strings.Join(set, " / "))
 }
