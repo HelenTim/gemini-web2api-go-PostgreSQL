@@ -210,7 +210,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt := messagesToPrompt(messages, tools, req["tool_choice"])
+	prompt, err := messagesToPrompt(messages, tools, req["tool_choice"])
+	if err != nil {
+		// 超长且丢无可丢。明确报 400 而不是发出去让上游把用户的问题截掉——
+		// 那样客户端拿到的是一个答非所问的 200，根本看不出请求其实没送到。
+		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+			"message": err.Error(), "type": "invalid_request_error", "code": "context_length_exceeded"}})
+		return
+	}
 	if strings.TrimSpace(prompt) == "" {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty prompt"}})
 		return
@@ -485,7 +492,12 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompt := messagesToPrompt(messages, tools, req["tool_choice"])
+	prompt, err := messagesToPrompt(messages, tools, req["tool_choice"])
+	if err != nil {
+		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{
+			"message": err.Error(), "type": "invalid_request_error", "code": "context_length_exceeded"}})
+		return
+	}
 	if strings.TrimSpace(prompt) == "" {
 		writeJSON(w, 400, map[string]interface{}{"error": map[string]string{"message": "empty input"}})
 		return

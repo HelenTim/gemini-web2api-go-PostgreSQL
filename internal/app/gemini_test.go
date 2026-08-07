@@ -132,16 +132,16 @@ func TestToolChoice(t *testing.T) {
 	msgs := []map[string]interface{}{{"role": "user", "content": "hi"}}
 
 	// none：工具定义完全不进 prompt
-	if p := messagesToPrompt(msgs, tools, "none"); strings.Contains(p, "get_weather") {
+	if p := mustPrompt(t, msgs, tools, "none"); strings.Contains(p, "get_weather") {
 		t.Errorf("tool_choice=none 不该注入工具定义: %s", p)
 	}
 	// required：必须出现强制措辞
-	p := messagesToPrompt(msgs, tools, "required")
+	p := mustPrompt(t, msgs, tools, "required")
 	if !strings.Contains(p, "MUST call one of the tools") {
 		t.Errorf("tool_choice=required 缺强制指令: %s", p)
 	}
 	// 指定函数：只留该函数，且点名它
-	p = messagesToPrompt(msgs, tools, map[string]interface{}{"type": "function",
+	p = mustPrompt(t, msgs, tools, map[string]interface{}{"type": "function",
 		"function": map[string]interface{}{"name": "get_weather"}})
 	if !strings.Contains(p, `MUST call the tool "get_weather"`) {
 		t.Errorf("指定函数缺强制指令: %s", p)
@@ -150,7 +150,7 @@ func TestToolChoice(t *testing.T) {
 		t.Errorf("指定函数时不该带上其它工具: %s", p)
 	}
 	// auto：保持原来的宽松措辞
-	if p := messagesToPrompt(msgs, tools, "auto"); !strings.Contains(p, "when needed") {
+	if p := mustPrompt(t, msgs, tools, "auto"); !strings.Contains(p, "when needed") {
 		t.Errorf("auto 应保持宽松措辞: %s", p)
 	}
 }
@@ -282,4 +282,15 @@ func TestClassifyError(t *testing.T) {
 			t.Errorf("classifyError(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
+}
+
+// mustPrompt 是测试里的便捷包装：messagesToPrompt 现在会在 prompt 超长时返回错误。
+func mustPrompt(t *testing.T, msgs []map[string]interface{}, tools []map[string]interface{},
+	toolChoice interface{}) string {
+	t.Helper()
+	p, err := messagesToPrompt(msgs, tools, toolChoice)
+	if err != nil {
+		t.Fatalf("messagesToPrompt: %v", err)
+	}
+	return p
 }

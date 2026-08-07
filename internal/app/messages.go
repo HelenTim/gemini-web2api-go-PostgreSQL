@@ -41,8 +41,26 @@ type ToolCallFunction struct {
 // 只能把约束写进指令。"required" 尤其必要：实测 Gemini 对自己能回答的问题
 // （查天气之类）会直接作答而不调工具，不强制就拿不到 tool_call。
 func messagesToPrompt(messages []map[string]interface{}, tools []map[string]interface{},
-	toolChoice interface{}) string {
-	var parts []string
+	toolChoice interface{}) (string, error) {
+	return assemblePrompt(buildPromptParts(messages, tools, toolChoice), rtCfg().MaxPromptTokens)
+}
+
+// promptPart 是拼 prompt 时的一段，droppable 标记它在超长时能不能被丢掉。
+//
+// 不能丢的是系统指令（含工具定义）和**最新一条消息**；能丢的是中间的历史对话。
+// 这个区分是 A1 的全部要点，见 assemblePrompt。
+type promptPart struct {
+	text      string
+	droppable bool
+}
+
+func buildPromptParts(messages []map[string]interface{}, tools []map[string]interface{},
+	toolChoice interface{}) []promptPart {
+	var parts []promptPart
+	// 系统指令 / 工具定义不可丢：丢了模型就不知道有哪些工具、该守什么规矩。
+	keep := func(text string) { parts = append(parts, promptPart{text: text}) }
+	// 历史对话可丢，超长时从最旧的开始。
+	drop := func(text string) { parts = append(parts, promptPart{text: text, droppable: true}) }
 
 	mode, forced := parseToolChoice(toolChoice)
 	if len(tools) > 0 && mode != "none" {
@@ -78,7 +96,7 @@ func messagesToPrompt(messages []map[string]interface{}, tools []map[string]inte
 					"and nothing else — do not answer the question yourself, even if you " +
 					"know the answer."
 			}
-			parts = append(parts, fmt.Sprintf(
+			keep(fmt.Sprintf(
 				"[System instruction]: You have access to tools. "+
 					"To call a tool, respond with:\n"+
 					"```tool_call\n{\"name\": \"func_name\", \"arguments\": {...}}\n```\n"+
@@ -94,7 +112,7 @@ func messagesToPrompt(messages []map[string]interface{}, tools []map[string]inte
 
 		switch role {
 		case "system":
-			parts = append(parts, "[System instruction]: "+content)
+			keep("[System instruction]: " + content)
 		case "assistant":
 			if tcs, ok := msg["tool_calls"].([]interface{}); ok && len(tcs) > 0 {
 				var tcStrs []string
@@ -114,26 +132,32 @@ func messagesToPrompt(messages []map[string]interface{}, tools []map[string]inte
 						name, args,
 					))
 				}
-				parts = append(parts, "[Assistant]: "+content+"\n"+strings.Join(tcStrs, "\n"))
+				drop("[Assistant]: " + content + "\n" + strings.Join(tcStrs, "\n"))
 			} else {
-				parts = append(parts, "[Assistant]: "+content)
+				drop("[Assistant]: " + content)
 			}
 		case "tool":
-			parts = append(parts, fmt.Sprintf("[Tool result for %s]: %s", getStr(msg, "name"), content))
+			drop(fmt.Sprintf("[Tool result for %s]: %s", getStr(msg, "name"), content))
 		default:
 			if content != "" {
-				parts = append(parts, content)
+				drop(content)
 			}
 		}
 	}
 
-	var nonEmpty []string
+	var out []promptPart
 	for _, p := range parts {
-		if p != "" {
-			nonEmpty = append(nonEmpty, p)
+		if p.text != "" {
+			out = append(out, p)
 		}
 	}
-	return strings.Join(nonEmpty, "\n\n")
+	// 最新一条无论什么角色都不能丢——它就是用户此刻问的问题。
+	// 上游超限时是从**尾部**截断，而我们把最新消息拼在末尾，两件事叠起来，
+	// 被丢掉的正好是刚问的那句。这是这个保护要解决的根因。
+	if n := len(out); n > 0 {
+		out[n-1].droppable = false
+	}
+	return out
 }
 
 func contentToString(content interface{}) string {
@@ -305,4 +329,79 @@ func parseToolChoice(tc interface{}) (string, string) {
 		}
 	}
 	return "auto", ""
+}
+
+// PromptTooLongError 表示丢完所有可丢的历史之后，prompt 仍然超过单请求上限。
+type PromptTooLongError struct {
+	Tokens, Budget int
+}
+
+func (e *PromptTooLongError) Error() string {
+	return fmt.Sprintf(
+		"prompt is %d tokens after dropping older history, over the %d-token per-request "+
+			"limit of the Gemini web protocol. The upstream silently truncates from the end, "+
+			"which would drop your latest message and produce an unrelated answer, so this "+
+			"request is rejected instead. Shorten the system prompt or the tool definitions.",
+		e.Tokens, e.Budget)
+}
+
+// 丢掉历史后插在原位，让模型知道中间断过，而不是以为对话本来就长这样。
+const droppedNotice = "[Note]: some earlier turns were omitted because the conversation exceeded the single-request limit."
+
+// assemblePrompt 把各段拼成最终 prompt，超长时从**最旧的历史**开始丢。
+//
+// 为什么必须我们自己丢：上游单请求约 2 万 token 封顶，超了**从尾部静默截断**且不
+// 报错。而 messagesToPrompt 按顺序拼、最新消息在末尾 —— 于是被丢掉的正好是用户
+// 刚问的那句。表现是模型答非所问、不调工具，看着像"变笨"或"工具支持不好"，
+// 实测两个不同客户端的用户都栽在这上面。
+//
+// budget<=0 表示关掉保护，退回旧行为（原样发出去，由上游截断）。
+func assemblePrompt(parts []promptPart, budget int) (string, error) {
+	join := func(ps []promptPart) string {
+		out := make([]string, 0, len(ps))
+		for _, p := range ps {
+			out = append(out, p.text)
+		}
+		return strings.Join(out, "\n\n")
+	}
+	if budget <= 0 || len(parts) == 0 {
+		return join(parts), nil
+	}
+
+	full := join(parts)
+	total := countTokens(full)
+	if total <= budget {
+		return full, nil
+	}
+
+	// 逐段计数，从最旧的可丢段开始摘，直到进预算内。
+	// 分隔符和提示语也占 token，所以每摘一段都重算一次全文，别拿差值估。
+	kept := append([]promptPart(nil), parts...)
+	dropped := 0
+	for {
+		idx := -1
+		for i := range kept {
+			if kept[i].droppable {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			break // 没有可丢的了
+		}
+		kept = append(kept[:idx], kept[idx+1:]...)
+		dropped++
+		// 提示语只插一次，插在被摘走的位置上
+		if dropped == 1 {
+			kept = append(kept[:idx], append([]promptPart{{text: droppedNotice}}, kept[idx:]...)...)
+		}
+		if countTokens(join(kept)) <= budget {
+			logf("[prompt] 超出 %d token 上限，已丢弃 %d 段较早的对话", budget, dropped)
+			return join(kept), nil
+		}
+	}
+
+	// 不可丢的部分自己就超了：系统提示或工具定义太大。
+	// 这时宁可明确报错，也不能发出去让上游把用户的问题截掉。
+	return "", &PromptTooLongError{Tokens: countTokens(join(kept)), Budget: budget}
 }

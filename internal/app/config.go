@@ -37,6 +37,8 @@ type Config struct {
 	FallbackAnon bool `json:"fallback_anon"`
 	// 是否自动从 /app 页面抓最新 bl 版本号。默认 true。
 	GeminiBLAuto bool `json:"gemini_bl_auto"`
+	// 单次请求 prompt 的 token 上限，0 = 不限。
+	MaxPromptTokens int `json:"max_prompt_tokens"`
 }
 
 var (
@@ -72,6 +74,9 @@ func defaultConfig() Config {
 		FallbackDirect:   false,
 		FallbackAnon:     false,
 		GeminiBLAuto:     true,
+		// 实测单请求约 2 万 token 封顶：18,758 稳过、20,579 过、27,479 挂。
+		// 取 18000 留余量——我们用 tiktoken 计数，跟上游真实分词器有偏差。
+		MaxPromptTokens: 18000,
 	}
 }
 

@@ -36,6 +36,9 @@ type RuntimeConfig struct {
 	FallbackAnon bool `json:"fallback_anon"`
 	// GeminiBLAuto 决定是否定期从 /app 页面抓最新的 bl 版本号覆盖上面钉死的值。
 	GeminiBLAuto bool `json:"gemini_bl_auto"`
+	// MaxPromptTokens 是单次请求 prompt 的 token 上限，超了从最旧的历史开始丢。
+	// 0 = 关掉保护（原样发出，由上游从尾部静默截断）。
+	MaxPromptTokens int `json:"max_prompt_tokens"`
 }
 
 const runtimeConfigKey = "runtime_config"
@@ -65,6 +68,7 @@ func initRuntimeConfig() {
 		FallbackDirect:   cfg.FallbackDirect,
 		FallbackAnon:     cfg.FallbackAnon,
 		GeminiBLAuto:     cfg.GeminiBLAuto,
+		MaxPromptTokens:  cfg.MaxPromptTokens,
 	}
 	if raw := kvGet(runtimeConfigKey); raw != "" {
 		saved := base
@@ -108,6 +112,7 @@ func validateRuntimeConfig(c RuntimeConfig) error {
 		{"per_ip_rph", c.PerIPRPH, 0, 100000},
 		{"retention_days", c.RetentionDays, 1, 3650},
 		{"proxy_cooldown_min", c.ProxyCooldownMin, 0, 10080},
+		{"max_prompt_tokens", c.MaxPromptTokens, 0, 200000},
 	} {
 		if r.v < r.min || r.v > r.max {
 			return fmt.Errorf("%s=%d 超出允许范围 [%d, %d]", r.name, r.v, r.min, r.max)
