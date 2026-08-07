@@ -331,9 +331,7 @@ An account's "failure count" and "last success" columns update automatically. On
 
 Note that "last success" only means a request involving this cookie succeeded; it does **not** prove the cookie is still valid. An expired cookie doesn't error — Gemini just treats you as anonymous. Use the **Check** button in the list to tell "still signed in" from "expired/invalid" without spending a real conversation on it.
 
-**Cookies renew themselves.** Nearly every upstream response refreshes `SIDCC` / `__Secure-1PSIDCC` / `__Secure-3PSIDCC` via `Set-Cookie`, and we merge those back into the account; separately, a keepalive ping goes to `accounts.google.com/RotateCookies` every 10 minutes (the interval is dictated by the server). (that response refreshes the same three entries). This mirrors what the browser does.
-
-**Don't expect it to keep accounts alive for long, though.** In a 3-account sample the one with both mechanisms lasted 86 minutes while one with neither lasted 114 — no measurable difference, and all of them shared a session with a live browser. If you keep browsing Gemini in the same browser after exporting the cookie, both sides rotate `SIDCC` independently and probably knock each other out. **For a long-running deployment, use a dedicated account and stop signing into it from that browser once the cookie is exported.**
+**Cookies renew themselves.** Nearly every upstream response refreshes `SIDCC` / `__Secure-1PSIDCC` / `__Secure-3PSIDCC` via `Set-Cookie`, and we merge those back into the account; separately, a keepalive ping goes to `accounts.google.com/RotateCookies` every 10 minutes (the interval is dictated by the server). (that response refreshes the same three entries).
 
 **Each account is pinned to its own exit.** If the cookie pool and proxy pool rotated independently, one Google account would emit requests from dozens of different IPs, which is exactly what account sharing looks like to Google. An account binds to the first exit it uses and stays there until that exit becomes unusable.
 
