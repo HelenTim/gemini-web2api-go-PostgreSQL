@@ -217,7 +217,10 @@ func streamGenerate(prompt string, mc ModelConfig,
 	inner[18] = 0
 	inner[27] = 1
 	inner[30] = []interface{}{4}
-	inner[41] = []interface{}{2}
+	// 抓包里浏览器三种场景（有 cookie / 无 cookie / 扩展思考）全是 [1]。
+	// 我们原来写 [2]，抄自协议层已被证伪的那个 Python 参考实现。含义仍未知，
+	// 匿名两个值都能通，但没有理由继续偏离浏览器。
+	inner[41] = []interface{}{1}
 	inner[53] = 0
 	inner[59] = uuid.NewString()
 	inner[61] = []interface{}{}
@@ -705,7 +708,10 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	inner[18] = 0
 	inner[27] = 1
 	inner[30] = []interface{}{4}
-	inner[41] = []interface{}{2}
+	// 抓包里浏览器三种场景（有 cookie / 无 cookie / 扩展思考）全是 [1]。
+	// 我们原来写 [2]，抄自协议层已被证伪的那个 Python 参考实现。含义仍未知，
+	// 匿名两个值都能通，但没有理由继续偏离浏览器。
+	inner[41] = []interface{}{1}
 	inner[53] = 0
 	inner[59] = uuid.NewString()
 	inner[61] = []interface{}{}
