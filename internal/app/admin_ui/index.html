@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>gemini-web2api 管理面板</title>
 <!-- Chart.js 随二进制一起 embed，不走 CDN：内网/离线部署也要能开面板 -->
-<script src="/admin/chart.umd.min.js"></script>
+<script src="chart.umd.min.js"></script>
 <style>
   /* ── Gemini 设计语言（亮色）────────────────────────────────────────────
      照 gemini.google.com 本体：页面是带蓝调的白(#F8FAFD)，卡片纯白**不描边**，
@@ -398,8 +398,8 @@ const destroyChart = (key) => { if (charts[key]) { charts[key].destroy(); delete
 
 const pages = {
   dashboard: async () => {
-    const stats = await api('/admin/api/stats?hours=24');
-    const usage = await api('/admin/api/usage');
+    const stats = await api('api/stats?hours=24');
+    const usage = await api('api/usage');
     return `
       <div class="kpi-row">
         <div class="kpi"><div class="label">24 小时请求</div><div class="value">${fmt.num(stats.total_requests)}</div></div>
@@ -581,7 +581,7 @@ const pages = {
   },
 
   proxies: async () => {
-    const data = await api('/admin/api/proxies');
+    const data = await api('api/proxies');
     return `
       <div class="panel page-fill">
         <h2>代理池
@@ -634,7 +634,7 @@ const pages = {
   },
 
   cookies: async () => {
-    const data = await api('/admin/api/cookies');
+    const data = await api('api/cookies');
     const items = data.items || [];
     return `
       <div class="panel page-fill">
@@ -698,7 +698,7 @@ const pages = {
   },
 
   settings: async () => {
-    const k = await api('/admin/api/apikey');
+    const k = await api('api/apikey');
     return `
       <div class="grid-main">
         <div class="panel">
@@ -769,7 +769,7 @@ const pages = {
 
 async function loadChart(range = '24h') {
   destroyChart('req');
-  const data = await api('/admin/api/timeseries?range=' + range);
+  const data = await api('api/timeseries?range=' + range);
   const labels = (data.series || []).map(s => fmt.ts(s.bucket));
   const reqs = (data.series || []).map(s => s.requests);
   const p50 = (data.series || []).map(s => s.p50_ms);
@@ -836,7 +836,7 @@ function reqPageSize() {
 async function loadReqs() {
   const status = document.getElementById('reqStatus')?.value || '';
   const model = document.getElementById('reqModel')?.value || '';
-  const url = `/admin/api/requests?limit=${reqPageSize()}&offset=${reqOffset}` +
+  const url = `api/requests?limit=${reqPageSize()}&offset=${reqOffset}` +
               (status ? '&status=' + status : '') +
               (model ? '&model=' + encodeURIComponent(model) : '');
   const data = await api(url);
@@ -958,7 +958,7 @@ const RT_GROUPS = [
 let rtCfgCache = null, rtModels = [];
 
 async function loadRtCfg() {
-  const data = await api('/admin/api/config');
+  const data = await api('api/config');
   if (!data) return;
   rtCfgCache = data.config; rtModels = data.models || [];
   document.getElementById('rtCfgForm').innerHTML = RT_GROUPS.map(g => `
@@ -1021,7 +1021,7 @@ async function saveRtCfg() {
       : el.value.trim();
   }
   msg.textContent = '保存中…'; msg.style.color = 'var(--muted)';
-  const res = await fetch('/admin/api/config', {
+  const res = await fetch('api/config', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -1080,7 +1080,7 @@ async function addProxy() {
     ],
   });
   if (!data) return;
-  const r = await fetch('/admin/api/proxies', {
+  const r = await fetch('api/proxies', {
     method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: data.name, url: data.url, weight: 1 }),
@@ -1098,16 +1098,16 @@ async function delProxy(id) {
     danger: true,
   });
   if (!ok) return;
-  await api('/admin/api/proxies/' + id, { method: 'DELETE' });
+  await api('api/proxies/' + id, { method: 'DELETE' });
   flash('已删除');
   await refreshPage();
 }
 async function toggleProxy(id) {
-  await api('/admin/api/proxies/' + id + '/toggle', { method: 'POST' });
+  await api('api/proxies/' + id + '/toggle', { method: 'POST' });
   await refreshPage();
 }
 async function resetProxy(id) {
-  await api('/admin/api/proxies/' + id + '/reset', { method: 'POST' });
+  await api('api/proxies/' + id + '/reset', { method: 'POST' });
   flash('已重置失败计数');
   await refreshPage();
 }
@@ -1252,7 +1252,7 @@ async function addCookieAcct() {
     },
   });
   if (!data) return;
-  const r = await fetch('/admin/api/cookies', {
+  const r = await fetch('api/cookies', {
     method: 'POST', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -1273,7 +1273,7 @@ async function editCookieAcct(id, label, note) {
     ],
   });
   if (!data) return;
-  const j = await api('/admin/api/cookies/' + id, {
+  const j = await api('api/cookies/' + id, {
     method: 'PATCH', body: JSON.stringify({ label: data.label, note: data.note }),
   });
   if (j.error) return flash('保存失败：' + j.error);
@@ -1287,7 +1287,7 @@ async function checkCookieAcct(id, btn) {
   const old = btn.textContent;
   btn.textContent = '检测中…'; btn.disabled = true;
   try {
-    const r = await fetch('/admin/api/cookies/' + id + '/check',
+    const r = await fetch('api/cookies/' + id + '/check',
       { method: 'POST', credentials: 'include' });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { flash('检测失败：' + (d.error || r.status)); return; }
@@ -1305,7 +1305,7 @@ async function rotateCookieAcct(id, btn) {
   const old = btn.textContent;
   btn.textContent = '…'; btn.disabled = true;
   try {
-    const r = await fetch('/admin/api/cookies/' + id + '/rotate',
+    const r = await fetch('api/cookies/' + id + '/rotate',
       { method: 'POST', credentials: 'include' });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { flash('保活失败：' + (d.error || r.status)); return; }
@@ -1316,7 +1316,7 @@ async function rotateCookieAcct(id, btn) {
 }
 
 async function toggleCookieAcct(id) {
-  await api('/admin/api/cookies/' + id + '/toggle', { method: 'POST' });
+  await api('api/cookies/' + id + '/toggle', { method: 'POST' });
   await refreshPage();
 }
 
@@ -1327,7 +1327,7 @@ async function delCookieAcct(id) {
     confirmText: '删除', danger: true,
   });
   if (!ok) return;
-  await api('/admin/api/cookies/' + id, { method: 'DELETE' });
+  await api('api/cookies/' + id, { method: 'DELETE' });
   flash('已删除');
   await refreshPage();
 }
@@ -1340,7 +1340,7 @@ async function doLogout() {
     danger: true,
   });
   if (!ok) return;
-  await api('/admin/api/logout', { method: 'POST' });
+  await api('api/logout', { method: 'POST' });
   currentPage = null;
   renderLogin();
 }
@@ -1353,7 +1353,7 @@ async function populateTestProxies() {
   // 清掉旧的代理选项（保留前两个固定项）
   while (sel.options.length > 2) sel.remove(2);
   try {
-    const data = await api('/admin/api/proxies');
+    const data = await api('api/proxies');
     (data.items || []).filter(p => p.enabled).forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.id;
@@ -1370,7 +1370,7 @@ async function runTest() {
   box.style.display = 'block';
   box.innerHTML = '<div class="empty">正在测试…（最多等 30 秒）</div>';
   try {
-    const url = '/admin/api/test' + (proxy !== '' ? '?proxy_id=' + proxy : '');
+    const url = 'api/test' + (proxy !== '' ? '?proxy_id=' + proxy : '');
     const r = await api(url);
     const statusBadge = {
       success: '<span class="badge ok">成功</span>',
@@ -1425,7 +1425,7 @@ async function rotateKey() {
     danger: true,
   });
   if (!ok) return;
-  await api('/admin/api/apikey', { method: 'POST' });
+  await api('api/apikey', { method: 'POST' });
   flash('已生成新 Key');
   await refreshPage();
   const el = document.getElementById('apiKeyView');
@@ -1442,7 +1442,7 @@ async function customKey() {
   });
   if (!k) return;
   if (k.length < 20) return flash('Key 至少 20 字符');
-  const r = await fetch('/admin/api/apikey', {
+  const r = await fetch('api/apikey', {
     method: 'PATCH', credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key: k }),
@@ -1703,9 +1703,9 @@ async function loadSideStat() {
   if (!box) return;
   try {
     const [root, ck, usage] = await Promise.all([
-      fetch('/').then(r => r.json()).catch(() => null),
-      api('/admin/api/cookies').catch(() => null),
-      api('/admin/api/usage').catch(() => null),
+      fetch('../').then(r => r.json()).catch(() => null),
+      api('api/cookies').catch(() => null),
+      api('api/usage').catch(() => null),
     ]);
     const dot = document.getElementById('healthDot');
     const ht = document.getElementById('healthText');
@@ -1739,7 +1739,7 @@ function renderLogin() {
 
 async function doLogin() {
   const tok = document.getElementById('tokenInput').value;
-  const r = await fetch('/admin/api/login', { method: 'POST',
+  const r = await fetch('api/login', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: tok }) });
   if (r.ok) renderShell();
@@ -1748,7 +1748,7 @@ async function doLogin() {
 
 // boot — try fetching stats; if 401, login page
 (async () => {
-  const r = await fetch('/admin/api/stats?hours=1', { credentials: 'include' });
+  const r = await fetch('api/stats?hours=1', { credentials: 'include' });
   if (r.ok) renderShell();
   else renderLogin();
 })();
