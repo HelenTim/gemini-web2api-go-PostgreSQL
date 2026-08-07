@@ -82,3 +82,37 @@ func TestAccountAddAcceptsTemplate(t *testing.T) {
 		t.Error("入池后取不出 SAPISID")
 	}
 }
+
+// 从 DevTools 复制出来的串不一定带空格。按 "; " 切的话整段会被当成一个键，
+// 于是 SAPISID 取不到值、不发 Authorization 头、请求被上游当匿名处理，
+// 而用户看到的是"成功了"——又一个静默降级。
+func TestCookiePairsWithoutSpaces(t *testing.T) {
+	for _, in := range []string{
+		"SID=a; SAPISID=b; HSID=c",
+		"SID=a;SAPISID=b;HSID=c",
+		"  SID=a ;  SAPISID=b ;HSID=c  ",
+		"SID=a;\nSAPISID=b;\nHSID=c",
+	} {
+		if got := extractSAPISID(in); got != "b" {
+			t.Errorf("extractSAPISID(%q) = %q，期望 \"b\"", in, got)
+		}
+		if n := len(cookieNames(in)); n != 3 {
+			t.Errorf("cookieNames(%q) 数出 %d 项，期望 3", in, n)
+		}
+	}
+	// 值里带 '='（base64 补位）只能在第一个等号处切
+	if got := extractSAPISID("SAPISID=ab==; SID=x"); got != "ab==" {
+		t.Errorf("值里的等号被切坏了: %q", got)
+	}
+}
+
+// 没空格的串以前能通过 accountAdd 的字符串包含判断，存进去却是废的。
+func TestAccountAddAcceptsNoSpaceCookie(t *testing.T) {
+	resetSeedState(t)
+	if _, err := accountAdd("无空格", "SID=a;SAPISID=b;__Secure-1PSID=c", ""); err != nil {
+		t.Fatalf("没空格的串应该能入池: %v", err)
+	}
+	if extractSAPISID(accountList()[0].Cookie) != "b" {
+		t.Error("入池后取不出 SAPISID")
+	}
+}

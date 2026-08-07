@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,11 +24,29 @@ type CookieAccount struct {
 	FailCount  int64  `json:"fail_count"`
 }
 
+// splitCookiePairs 把 "k=v; k=v" 拆成键值对。
+//
+// 按 ";" 切再逐段 TrimSpace，不按 "; " 切：从 DevTools 复制出来的串不一定带空格，
+// 而按 "; " 切的话 "SID=a;SAPISID=b" 会整段当成一个键 —— 于是 extractSAPISID
+// 取不到值、不发 Authorization 头、请求被上游当匿名处理，用户毫不知情。
+//
+// 值里可能含 "="（base64 补位），所以只在第一个等号处切。
+func splitCookiePairs(cookie string) [][2]string {
+	var out [][2]string
+	for _, p := range strings.Split(cookie, ";") {
+		p = strings.TrimSpace(p)
+		if i := strings.Index(p, "="); i > 0 {
+			out = append(out, [2]string{p[:i], p[i+1:]})
+		}
+	}
+	return out
+}
+
 // extractSAPISID 从一整串 cookie 里取 SAPISID 的值，取不到返回空串。
 func extractSAPISID(cookie string) string {
-	for _, p := range strings.Split(cookie, "; ") {
-		if eq := strings.Index(p, "="); eq > 0 && p[:eq] == "SAPISID" {
-			return p[eq+1:]
+	for _, kv := range splitCookiePairs(cookie) {
+		if kv[0] == "SAPISID" {
+			return kv[1]
 		}
 	}
 	return ""
@@ -36,22 +55,27 @@ func extractSAPISID(cookie string) string {
 // cookieNames 返回 cookie 串里出现的所有 cookie 名（顺序保留），供 UI 展示。
 func cookieNames(cookie string) []string {
 	var names []string
-	for _, p := range strings.Split(cookie, "; ") {
-		if i := strings.Index(p, "="); i > 0 {
-			names = append(names, p[:i])
-		}
+	for _, kv := range splitCookiePairs(cookie) {
+		names = append(names, kv[0])
 	}
 	return names
 }
 
-// accountAdd 往池里插一条。cookie 必须含 SAPISID（否则多半没复制全）。
+// accountAdd 往池里插一条。cookie 必须能取到非空的 SAPISID。
 // 这是面板/API 手工添加走的路，用户当场看得到错误提示，拦下来是对的。
+//
+// 判据是**取不取得到值**，不是"字符串里出没出现过 SAPISID"：后者会把
+// 一份没填的逐项模板（键名在、值全空）放进池子，存成一整段 JSON，
+// 之后每次轮到它都注定失败。
 func accountAdd(label, cookie, note string) (int64, error) {
-	cookie = strings.TrimSpace(cookie)
-	if !strings.Contains(cookie, "SAPISID") {
+	c, ok := normalizeCookie(cookie, "手工添加的 cookie")
+	if !ok {
+		return 0, fmt.Errorf("cookie 解析失败：既不是 \"k=v; k=v\" 串，也不是可识别的 JSON")
+	}
+	if extractSAPISID(c) == "" {
 		return 0, fmt.Errorf("cookie 里没有 SAPISID，多半没复制全（需要 gemini.google.com 下的完整 cookie，至少含 SID / HSID / SSID / APISID / SAPISID / __Secure-1PSID）")
 	}
-	return accountInsert(label, cookie, note)
+	return accountInsert(label, c, note)
 }
 
 // accountAdopt 是启动时导入既有配置专用的：**不做 SAPISID 检查**。
@@ -61,8 +85,11 @@ func accountAdd(label, cookie, note string) (int64, error) {
 // 不该在升级时被我们新加的校验拦下来，让用户悄无声息地退回匿名。只警告，
 // 健康度会在面板上如实体现。
 func accountAdopt(label, cookie, note string) (int64, error) {
-	cookie = strings.TrimSpace(cookie)
-	if !strings.Contains(cookie, "SAPISID") {
+	cookie, ok := normalizeCookie(cookie, label)
+	if !ok {
+		return 0, fmt.Errorf("cookie 解析失败")
+	}
+	if extractSAPISID(cookie) == "" {
 		logf("[cookie] %s 里没有 SAPISID，算不出 SAPISIDHASH 授权头，可能只当匿名处理；"+
 			"先按原样导入，请到面板核对", label)
 	}
@@ -256,20 +283,62 @@ func dropSeededCookie(prevCookie string) {
 	}
 }
 
-// normalizeCookie 把旧单 cookie 路径吃的两种格式归一化成池子要的裸 cookie 串。
+// 面板逐项填写模式列出的 cookie，同时也是拼串时的固定顺序。
+// 顺序必须确定：同一份 cookie 若因键顺序不同拼出两种串，按内容去重就失效了。
+var cookieTemplateOrder = []string{
+	"SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-1PSIDTS",
+}
+
+// normalizeCookie 把各种输入形态归一化成池子要的裸 "k=v; k=v" 串。
+//
+// 吃三种：
+//   - 裸串，原样返回
+//   - 旧单 cookie 路径的 {"cookie":"k=v; k=v","sapisid":"..."}
+//   - 面板逐项模式的 {"SID":"a","SAPISID":"b",...}
+//
 // 不归一化的话池子里会存进一整段 JSON，SAPISID 提取和后续请求全错。
 func normalizeCookie(raw, who string) (string, bool) {
+	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "{") {
 		return raw, true
 	}
-	var obj struct {
-		Cookie string `json:"cookie"`
-	}
-	if err := json.Unmarshal([]byte(raw), &obj); err != nil || obj.Cookie == "" {
-		logf("[cookie] %s 是 JSON 但取不出 cookie 字段，跳过", who)
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		logf("[cookie] %s 是 JSON 但解析失败，跳过: %v", who, err)
 		return "", false
 	}
-	return strings.TrimSpace(obj.Cookie), true
+	if c, ok := m["cookie"].(string); ok && strings.TrimSpace(c) != "" {
+		return strings.TrimSpace(c), true
+	}
+
+	str := func(k string) string {
+		s, _ := m[k].(string)
+		return strings.TrimSpace(s)
+	}
+	var parts []string
+	inTemplate := map[string]bool{}
+	for _, k := range cookieTemplateOrder {
+		inTemplate[k] = true
+		if v := str(k); v != "" {
+			parts = append(parts, k+"="+v)
+		}
+	}
+	// 用户从 DevTools 多复制几项进来不能丢，附在模板字段后面按名字排序
+	var extra []string
+	for k := range m {
+		if !inTemplate[k] && k != "sapisid" && str(k) != "" {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(extra)
+	for _, k := range extra {
+		parts = append(parts, k+"="+str(k))
+	}
+	if len(parts) == 0 {
+		logf("[cookie] %s 是 JSON 但一项非空值都没有，跳过", who)
+		return "", false
+	}
+	return strings.Join(parts, "; "), true
 }
 
 func poolHasCookie(cookie string) bool {
