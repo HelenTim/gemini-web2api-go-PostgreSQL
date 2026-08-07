@@ -74,5 +74,6 @@ func prepareContextFile(prompt, latest string, budget int, cookie, proxyURL stri
 		return prompt, nil, false, fmt.Errorf("超长对话转附件失败: %w", err)
 	}
 	logf("[context] prompt %d 字节超过 %d，已转成附件 %s", len(prompt), budget, contextFileName)
-	return contextFilePrompt(latest, budget), []fileRef{{Ref: ref, Name: contextFileName}}, true, nil
+	files := []fileRef{{Ref: ref, Name: contextFileName, Kind: 3, Mime: "text/plain"}}
+	return contextFilePrompt(latest, budget), files, true, nil
 }

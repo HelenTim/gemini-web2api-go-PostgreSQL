@@ -215,6 +215,8 @@ func streamGenerate(prompt, latest string, mc ModelConfig,
 type fileRef struct {
 	Ref  string // 上传返回的路径，形如 /contrib_service/ttl_1d/…
 	Name string // 展示给模型看的文件名
+	Kind int    // 附件类型：1=图片，3=文本/普通文件
+	Mime string // 内容类型，服务端按它决定怎么解析附件
 }
 
 // streamGenerateWithFiles 同上，但可以带附件。
@@ -332,10 +334,23 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, files []file
 
 	inner := make([]interface{}, 80)
 	if len(files) > 0 {
+		// 形状逐字取自浏览器抓包：
+		//   [[[路径, 类型, null, mime], "文件名", null×6, [0]], …]
+		// 类型位是 1=图片 / 3=文本文件 —— 拿 1 传文本文件等于告诉服务端"这是张图"。
 		refs := make([]interface{}, 0, len(files))
 		for _, f := range files {
+			kind := f.Kind
+			if kind == 0 {
+				kind = 3
+			}
+			mime := f.Mime
+			if mime == "" {
+				mime = "text/plain"
+			}
 			refs = append(refs, []interface{}{
-				[]interface{}{f.Ref, 1}, f.Name,
+				[]interface{}{f.Ref, kind, nil, mime}, f.Name,
+				nil, nil, nil, nil, nil, nil,
+				[]interface{}{0},
 			})
 		}
 		inner[0] = []interface{}{prompt, 0, nil, refs, nil, nil, 0}
