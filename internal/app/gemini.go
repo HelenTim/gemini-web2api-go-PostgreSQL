@@ -214,7 +214,7 @@ func streamGenerate(prompt string, mc ModelConfig,
 	inner[27] = 1
 	inner[30] = []interface{}{4}
 	// 抓包里浏览器三种场景（有 cookie / 无 cookie / 扩展思考）全是 [1]。
-	// 我们原来写 [2]，抄自协议层已被证伪的那个 Python 参考实现。含义仍未知，
+	// 我们原来写 [2]，是早期抄来的值、协议层已被证伪。含义仍未知，
 	// 匿名两个值都能通，但没有理由继续偏离浏览器。
 	inner[41] = []interface{}{1}
 	inner[53] = 0
@@ -447,7 +447,7 @@ func doGeminiRequest(endpoint, body string, headers map[string]string, proxyURL 
 	onLine func(string)) (int, []byte, int64, error) {
 	sendAt := time.Now()
 	if proxyURL != "" {
-		// 走 stdlib —— 跟 Kiro-Gogogo 同款 http.ProxyURL 实现，已知能过 socks5/socks5h。
+		// 走 stdlib 的 http.ProxyURL，已知能过 socks5/socks5h。
 		req, err := http.NewRequest("POST", endpoint, strings.NewReader(body))
 		if err != nil {
 			return 0, nil, 0, err
@@ -706,7 +706,7 @@ func probeGemini(prompt, proxyURL string) ProbeResult {
 	inner[27] = 1
 	inner[30] = []interface{}{4}
 	// 抓包里浏览器三种场景（有 cookie / 无 cookie / 扩展思考）全是 [1]。
-	// 我们原来写 [2]，抄自协议层已被证伪的那个 Python 参考实现。含义仍未知，
+	// 我们原来写 [2]，是早期抄来的值、协议层已被证伪。含义仍未知，
 	// 匿名两个值都能通，但没有理由继续偏离浏览器。
 	inner[41] = []interface{}{1}
 	inner[53] = 0

@@ -681,6 +681,7 @@ const pages = {
                 <td class="pre truncate" title="${escapeHtml(a.last_error || '')}">${escapeHtml(a.last_error || '—')}</td>
                 <td class="nw">
                   <span class="actions">
+                    <button class="btn muted" onclick="checkCookieAcct(${a.id}, this)">检测</button>
                     <button class="btn muted" onclick="toggleCookieAcct(${a.id})">${a.status === 'enabled' ? '禁用' : '启用'}</button>
                     <button class="btn muted" onclick="editCookieAcct(${a.id}, ${JSON.stringify(a.label || '').replace(/"/g, '&quot;')}, ${JSON.stringify(a.note || '').replace(/"/g, '&quot;')})">编辑</button>
                     <button class="btn danger" onclick="delCookieAcct(${a.id})">删除</button>
@@ -1151,11 +1152,11 @@ async function addCookieAcct() {
       </div>
 
       <div class="segbar" data-role="seg">
-        <button type="button" data-mode="fields" class="on">逐项填写</button>
-        <button type="button" data-mode="raw">整串粘贴（推荐）</button>
+        <button type="button" data-mode="raw" class="on">整串粘贴（推荐）</button>
+        <button type="button" data-mode="fields">逐项填写</button>
       </div>
 
-      <div data-pane="fields">
+      <div data-pane="fields" style="display:none;">
         <div class="ck-grid">
           ${COOKIE_KEYS.map(c => `
             <div class="field${c.k.length > 12 ? ' wide' : ''}">
@@ -1171,7 +1172,7 @@ async function addCookieAcct() {
         <b>整串粘贴比逐项填更接近真实浏览器</b>；逐项模式适合手头只有零散几项时用。</div>
       </div>
 
-      <div data-pane="raw" style="display:none;">
+      <div data-pane="raw">
         <div class="field">
           <textarea data-name="cookie" rows="6" spellcheck="false"
             placeholder="SID=...; HSID=...; SSID=...; APISID=...; SAPISID=...; __Secure-1PSID=..."></textarea>
@@ -1273,6 +1274,25 @@ async function editCookieAcct(id, label, note) {
   if (j.error) return flash('保存失败：' + j.error);
   flash('已保存');
   await refreshPage();
+}
+
+// 检测 cookie 还有没有登录态。判据是 /app 页面里有没有 SNlM0e——cookie 失效时
+// Gemini 不报错、只是把你当匿名，纯文本请求照样 200，所以不能拿"请求成功"当判据。
+async function checkCookieAcct(id, btn) {
+  const old = btn.textContent;
+  btn.textContent = '检测中…'; btn.disabled = true;
+  try {
+    const r = await fetch('/admin/api/cookies/' + id + '/check',
+      { method: 'POST', credentials: 'include' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { flash('检测失败：' + (d.error || r.status)); return; }
+    const via = d.proxy_name ? `，出口 ${d.proxy_name}` : '';
+    flash((d.ok ? '✓ #' + id + ' ' : '✗ #' + id + ' ') + (d.detail || '') +
+          `${via}，${d.took_ms}ms`);
+    await refreshPage();
+  } finally {
+    btn.textContent = old; btn.disabled = false;
+  }
 }
 
 async function toggleCookieAcct(id) {

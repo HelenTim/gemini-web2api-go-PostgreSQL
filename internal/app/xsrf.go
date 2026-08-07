@@ -38,11 +38,9 @@ const xsrfTTL = 20 * time.Minute
 
 var snlm0eRe = regexp.MustCompile(`"SNlM0e":"([^"]{10,200})"`)
 
-// push_id 埋在同一个 /app 页面里，标记是 "qKIAYe"。文件上传要拿它当 Push-ID 头。
-// 同页取的好处是不用为上传再抓一次页面——那会多一次出口请求，也多一次被判可疑的机会。
+// 上传要的两个页面参数，跟 XSRF token 同页取，省一次页面请求。
 var pushIDRe = regexp.MustCompile(`"qKIAYe":"([^"]{4,400})"`)
 
-// X-Client-Pctx 的来源，同页键 Ylro7b。实测值形如 "CgcSBWjK7pYx"。
 var pctxRe = regexp.MustCompile(`"Ylro7b":"([^"]{4,400})"`)
 
 // cookieKey 用 cookie 的短摘要当缓存键，避免把整串凭证塞进 map key。
@@ -86,11 +84,7 @@ func getXSRF(cookie, proxyURL string) (string, error) {
 	return e.token, nil
 }
 
-// getUploadTokens 取上传要用的两个页面参数（Push-ID / X-Client-Pctx）。
-// 跟 XSRF token 同一份缓存、同一次页面请求。
-//
-// 匿名（cookie 为空）也能取到并且能上传成功 —— 但**上传成功不等于能用**：
-// 匿名把路径填进对话会被服务端回 1100。调用方要自己确保有 cookie 才去引用。
+// getUploadTokens 取上传要用的 Push-ID / X-Client-Pctx，跟 XSRF token 同一份缓存。
 func getUploadTokens(cookie, proxyURL string) (pushID, pctx string, err error) {
 	key := cookieKey(cookie)
 
@@ -171,10 +165,7 @@ func fetchAppPage(cookie, proxyURL string) ([]byte, error) {
 	return body, nil
 }
 
-// fetchAppTokens 抓一次 /app 页面，把 XSRF token 和 push_id 一起抠出来。
-//
-// 两个 token 同页同次取：分开取就是两次页面请求，除了慢，还让 Google 多看到一次
-// 同 cookie 的页面加载。push_id 抠不到不算失败——它只影响上传，不影响对话。
+// fetchAppTokens 抓一次 /app 页面，把三个 token 一起抠出来。
 func fetchAppTokens(cookie, proxyURL string) (xsrfEntry, error) {
 	body, err := fetchAppPage(cookie, proxyURL)
 	if err != nil {
@@ -184,8 +175,7 @@ func fetchAppTokens(cookie, proxyURL string) (xsrfEntry, error) {
 	if m := snlm0eRe.FindSubmatch(body); m != nil {
 		e.token = string(m[1])
 	} else if cookie != "" {
-		// 带着 cookie 却拿不到 token，最可能是 cookie 已失效被当成匿名用户。
-		// 匿名本来就没有这个字段，不算错 —— 上传只要 push_id / pctx。
+		// 带 cookie 却拿不到 token = cookie 已失效被当成匿名。匿名本就没这字段，不算错。
 		return xsrfEntry{}, fmt.Errorf("no SNlM0e in page (cookie expired or not signed in)")
 	}
 	if p := pushIDRe.FindSubmatch(body); p != nil {

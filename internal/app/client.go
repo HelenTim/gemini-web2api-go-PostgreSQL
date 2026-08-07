@@ -85,7 +85,7 @@ func getTLSClient() tls_client.HttpClient {
 //
 // 走代理时改用 stdlib 而不是 tls-client，因为：
 // 1. stdlib 的 http.ProxyURL 原生支持 socks5:// / socks5h:// / http:// / https://，
-//    跟 Kiro-Gogogo 项目同款实现，已知能过我们手头的代理。
+//    已知能过我们手头的代理。
 // 2. tls-client 自带的 SOCKS 实现在某些代理端会 EOF（已实测）。
 //
 // 代价要写清楚：走代理时 Google 看到的是**我们自己的 TLS 指纹**，即 Go 标准库的，

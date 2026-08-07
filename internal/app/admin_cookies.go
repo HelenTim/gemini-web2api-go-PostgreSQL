@@ -118,6 +118,16 @@ func handleAdminCookieItem(w http.ResponseWriter, r *http.Request) {
 		logf("[cookies] 删除账号 #%d", id)
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	case http.MethodPost:
+		if action == "check" {
+			for _, a := range accountList() {
+				if a.ID == id {
+					writeJSON(w, 200, checkAccountCookie(a))
+					return
+				}
+			}
+			writeJSON(w, 404, map[string]string{"error": "account not found"})
+			return
+		}
 		if action != "toggle" {
 			writeJSON(w, 400, map[string]string{"error": "unknown action"})
 			return

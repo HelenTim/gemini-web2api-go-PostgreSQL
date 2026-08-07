@@ -325,7 +325,7 @@ func proxyCreate(name, url string, weight int) (int64, error) {
 	return id, nil
 }
 
-// validateProxyURL 校验代理 URL 协议（参考 Kiro-Gogogo 实现）。
+// validateProxyURL 校验代理 URL 协议。
 // 支持 http / https / socks5 / socks5h。
 //
 // scheme 按大小写不敏感比：URL 的 scheme 本来就不区分大小写，url.Parse 会统一转小写，
