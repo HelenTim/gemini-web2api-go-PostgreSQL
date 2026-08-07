@@ -32,6 +32,9 @@ type RuntimeConfig struct {
 	// FallbackDirect 决定代理池一个出口都用不上时是退回直连还是直接 429。
 	// 默认 false：配了代理池就意味着不想暴露本机 IP，悄悄直连会把这个前提废掉。
 	FallbackDirect bool `json:"fallback_direct"`
+	// FallbackAnon 决定 cookie 失效时是降级成匿名继续跑还是直接报错。
+	// 默认 false：匿名档拿不到 3.1 Pro / 扩展思考 / 生图，降级了客户端也看不出来。
+	FallbackAnon bool `json:"fallback_anon"`
 }
 
 const runtimeConfigKey = "runtime_config"
@@ -60,6 +63,7 @@ func initRuntimeConfig() {
 
 		ProxyCooldownMin: cfg.ProxyCooldownMin,
 		FallbackDirect:   cfg.FallbackDirect,
+		FallbackAnon:     cfg.FallbackAnon,
 	}
 	if raw := kvGet(runtimeConfigKey); raw != "" {
 		saved := base

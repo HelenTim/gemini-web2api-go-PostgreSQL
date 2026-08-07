@@ -269,8 +269,18 @@ func streamGenerate(prompt string, mc ModelConfig,
 	// 取 XSRF token 要走跟正式请求同一个出口，否则 token 和请求来自两个 IP。
 	xsrfToken, xerr := getXSRF(cookieStr, proxyURL)
 	if xerr != nil {
+		// 取不到 SNlM0e 基本等于 cookie 已失效（页面把我们当匿名用户了），
+		// 记一次失败，让面板上能看出是哪个号该换了。
 		markCookieByStatus(cookieID, 401, xerr.Error())
-		return nil, fmt.Errorf("cookie 无法使用：%w", xerr)
+		if !rtCfg().FallbackAnon {
+			// 默认报错而不是降级：cookie 失效后上游不会拒绝，只是把你当匿名用户，
+			// 纯文本请求照样 200 —— 于是 3.1 Pro 被静默降级成 3.5 Flash-Lite、
+			// 思考链消失，客户端完全看不出来。宁可明确失败也不给假的成功。
+			return nil, fmt.Errorf("cookie 无法使用：%w", xerr)
+		}
+		logf("[cookie] 账号 %d 取 XSRF 失败，本次降级匿名（能力会退化到匿名档）：%v", cookieID, xerr)
+		cookieStr, sapisid, cookieID = "", "", 0
+		xsrfToken = ""
 	}
 	body := buildBody(xsrfToken)
 

@@ -33,6 +33,8 @@ type Config struct {
 	ProxyCooldownMin int `json:"proxy_cooldown_min"`
 	// 代理池无可用出口时是否退回直连。默认 false。
 	FallbackDirect bool `json:"fallback_direct"`
+	// cookie 失效时是否降级成匿名继续跑。默认 false。
+	FallbackAnon bool `json:"fallback_anon"`
 }
 
 var (
@@ -64,6 +66,7 @@ func defaultConfig() Config {
 		// 实测被拦的出口 106-121 分钟自动恢复，冷却取 120 分钟。
 		ProxyCooldownMin: 120,
 		FallbackDirect:   false,
+		FallbackAnon:     false,
 	}
 }
 
