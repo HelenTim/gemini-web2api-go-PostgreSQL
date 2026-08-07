@@ -26,12 +26,21 @@ var (
 	proxyCursor uint64
 )
 
-// loadProxies refreshes the in-memory proxy list from DB.
+// loadProxies 从 DB 刷新内存里的代理列表。
+//
+// 读一半失败时**保留上一次的池子**，绝不用半截结果覆盖。
+// 旧写法有两个静默失效点：Scan 出错 continue（悄悄漏掉一个代理）、rows.Err()
+// 完全不查（遍历中断当成正常读完）。两者都会让 proxyCache 变短甚至变空，而
+// acquireSlot 用 len(proxyCache)==0 判断"没配代理池"，于是**池子一空就退回直连**
+// —— 部署者的真实 IP 直接暴露给上游，日志上只看到偶发的直连请求。
+//
+// 这条路径每个请求都会走（recordProxyResult 结束就调），而 WAL 模式下并发
+// UPDATE 期间 rows.Next() 完全可能返回 SQLITE_BUSY，所以"偶发"就是这么来的。
 func loadProxies() {
 	rows, err := getDB().Query(`SELECT id, name, url, enabled, weight, fail_count,
         IFNULL(last_used,0), IFNULL(last_error,''), created_at FROM proxies ORDER BY id`)
 	if err != nil {
-		logf("[proxy] load failed: %v", err)
+		logf("[proxy] 读取失败，保留上一次的代理池: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -41,10 +50,15 @@ func loadProxies() {
 		var enabled int
 		if err := rows.Scan(&p.ID, &p.Name, &p.URL, &enabled, &p.Weight, &p.FailCount,
 			&p.LastUsed, &p.LastError, &p.CreatedAt); err != nil {
-			continue
+			logf("[proxy] 有行读不出来，保留上一次的代理池: %v", err)
+			return
 		}
 		p.Enabled = enabled == 1
 		list = append(list, p)
+	}
+	if err := rows.Err(); err != nil {
+		logf("[proxy] 遍历中断，保留上一次的代理池: %v", err)
+		return
 	}
 	proxyMu.Lock()
 	proxyCache = list
