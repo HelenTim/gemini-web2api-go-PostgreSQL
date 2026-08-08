@@ -19,15 +19,20 @@ import (
 //
 // 它**会**返回 Set-Cookie，刷新 SIDCC / __Secure-1PSIDCC / __Secure-3PSIDCC 三项
 // （两份抓包 12 次里 9 次、15 次里 14 次），跟普通响应刷的是同一组，所以这里也要
-// 走 mergeSetCookie。整份抓包里没有任何响应重设过 __Secure-1PSIDTS。
+// 走 mergeSetCookie。
 //
 // 注意：这条结论一开始记反了（记成"一次都没有 Set-Cookie，是纯服务端保活"），
 // 因为读了 CDP 抓包的 responseHeaders —— set-cookie 只出现在 wireResponseHeaders，
 // 前者恒为 0 条。改这里之前先读 docs/local/capture-reading.md。
 //
-// 保活能不能延长账号寿命**没有验证到**：同一来源的 cookie，带续期+保活的活了 86
-// 分钟，两者都没有的活了 114 分钟，n=3 且都是从抓包里抽出来、跟真实浏览器共用同一
-// 个会话。所以这里只声明"跟浏览器行为一致"，不声明"号能活更久"。
+// **这条链路只回 SIDCC 三项，拿不到 __Secure-1PSIDTS**（完整 30 项 cookie、
+// rot=1/2/3 都试过）。浏览器里 1PSIDTS 一族每 8 分钟换一轮，走的是另一条路
+// —— GET /RotateBoundCookies 先 401 给 challenge，再带 Sec-Session-Google-Response
+// 的签名 JWT 换新票，即 Chrome 的 DBSC 设备绑定会话。判据在 netlog.json
+// （浏览器进程级），页面级 CDP 抓包里一条都看不到。
+//
+// 导出的 cookie 会不会因此而死**没有验证**，只有相关性：三个号活了 71 / 114 / 86
+// 分钟，期间 SIDTS 从没更新过。详见 ../../CLAUDE.md 里那节的「未验证」清单。
 
 const (
 	rotatePageURL = "https://accounts.google.com/RotateCookiesPage" +
@@ -73,9 +78,8 @@ func rotateAccount(a CookieAccount) (time.Duration, error) {
 	if cookie != a.Cookie {
 		updateAccountCookie(a.ID, cookie)
 	}
-	// 记下这一轮到底刷新了哪些项。上游只回 SIDCC 三项，而浏览器里
-	// __Secure-1PSIDTS 一族每 8 分钟左右也在换 —— 那部分我们目前拿不到，
-	// 打出来是为了下次拿到活 cookie 时能直接看出有没有变化。
+	// 记下这一轮到底刷新了哪些项，方便对着抓包核。这条链路只会回 SIDCC 三项；
+	// __Secure-1PSIDTS 那一族走的是另一条路，我们复刻不了（见文件头）。
 	if names := setCookieNames(append(append([]string{}, pageSet...), setCookie...)); len(names) > 0 {
 		logf("[rotate] 账号 #%d 刷新了 %s", a.ID, strings.Join(names, ", "))
 	}
