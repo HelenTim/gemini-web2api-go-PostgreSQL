@@ -23,6 +23,23 @@ const (
 	hexPro31     = "9d8ca3786ebdfbea" // 3.1 Pro
 )
 
+// innerSlots 是 payload 里 inner 数组的长度。浏览器发 97-98 槽，我们原来只开 80，
+// 于是 inner[80]（扩展思考）连位置都没有、想填也填不进去。
+//
+// 加长本身是安全的：曾经把它从 80 加到 102 来试 inner[79] 会不会复活，结论是不会
+// —— 模型选择完全由 x-goog-ext-525001261-jspb header 决定，长度不影响。
+const innerSlots = 97
+
+// inner[80] / 模型 header 下标 15 的取值：1=普通，2=扩展思考。
+//
+// **只在登录态生效**：匿名请求带上它服务端静默忽略，回报的仍是普通模型、思考链 0
+// 字符（对齐登录态抓包参数复测 3 组，8 次全灭）。所以带这个的模型跟 3.1 Pro 一样，
+// 没 cookie 时不暴露。
+const (
+	thinkingNormal   = 1
+	thinkingExtended = 2
+)
+
 // ModelConfig holds the server-side model id plus the legacy MODE_CATEGORY value.
 type ModelConfig struct {
 	// HexID 走 x-goog-ext-525001261-jspb header，是服务端唯一认的模型开关。
@@ -31,6 +48,9 @@ type ModelConfig struct {
 	HexID string
 	Mode  int
 	Desc  string
+	// Thinking 为真时填 inner[80]=2，即网页 UI 上的「扩展思考」。跟 HexID 正交
+	// —— 三个模型都能开，不是某个专属模型。
+	Thinking bool
 }
 
 // 只暴露服务端清单（batchexecute?rpcids=otAQ7b）里真实存在的模型。
@@ -41,6 +61,12 @@ var Models = map[string]ModelConfig{
 	"gemini-3.6-flash":      {HexID: hexFlash36, Mode: 1, Desc: "Latest all-around model"},
 	"gemini-3.5-flash-lite": {HexID: hexFlashLite, Mode: 6, Desc: "Fastest, lightweight"},
 	"gemini-3.1-pro":        {HexID: hexPro31, Mode: 3, Desc: "Most capable; needs a signed-in cookie (downgraded to Flash-Lite without one)"},
+
+	// 扩展思考版。inner[80]=2 跟模型 hex 正交，三个模型都能开；但只在登录态生效，
+	// 所以跟 3.1 Pro 一样在没 cookie 时不暴露。
+	"gemini-3.6-flash-thinking":      {HexID: hexFlash36, Mode: 1, Thinking: true, Desc: "3.6 Flash with extended thinking; needs a signed-in cookie"},
+	"gemini-3.5-flash-lite-thinking": {HexID: hexFlashLite, Mode: 6, Thinking: true, Desc: "3.5 Flash-Lite with extended thinking; needs a signed-in cookie"},
+	"gemini-3.1-pro-thinking":        {HexID: hexPro31, Mode: 3, Thinking: true, Desc: "3.1 Pro with extended thinking; needs a signed-in cookie"},
 }
 
 // hasCookie 表示 cookie 池里有没有可用账号。决定 3.1 Pro 是否出现在模型列表里。
@@ -64,7 +90,7 @@ func availableModels() map[string]ModelConfig {
 	}
 	out := make(map[string]ModelConfig, len(Models))
 	for k, v := range Models {
-		if k == "gemini-3.1-pro" {
+		if k == "gemini-3.1-pro" || v.Thinking {
 			continue
 		}
 		out[k] = v
@@ -351,7 +377,7 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 		})
 	}
 
-	inner := make([]interface{}, 80)
+	inner := make([]interface{}, innerSlots)
 	if len(files) > 0 {
 		// 形状逐字取自浏览器抓包：
 		//   [[[路径, 类型, null, mime], "文件名", null×6, [0]], …]
@@ -392,10 +418,17 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 	// 匿名两个值都能通，但没有理由继续偏离浏览器。
 	inner[41] = []interface{}{1}
 	inner[53] = 0
-	inner[59] = uuid.NewString()
+	reqUUID := uuid.NewString()
+	inner[59] = reqUUID
 	inner[61] = []interface{}{}
 	inner[68] = 1
 	inner[79] = mc.Mode
+	inner[80] = thinkingNormal
+	inner[96] = 0
+	if mc.Thinking {
+		inner[80] = thinkingExtended
+		inner[96] = 1
+	}
 
 	innerJSON, err := json.Marshal(inner)
 	if err != nil {
@@ -420,7 +453,14 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 
 	body := buildBody(xsrfToken)
 
+	thinkVal := thinkingNormal
+	if mc.Thinking {
+		thinkVal = thinkingExtended
+	}
+	modelHeader := buildModelHeader(mc.HexID, mc.Mode, thinkVal, reqUUID)
+
 	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
+	geminiHeaders["x-goog-ext-525001261-jspb"] = modelHeader
 	var lastErr error
 	// 最后一次拿到的 HTTP 状态码，0 表示网络层就失败了没拿到响应。
 	// cookie 健康度只认 401/403，别的状态不算 cookie 的错，见 markCookieByStatus。
@@ -484,6 +524,7 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 				if tok, e := getXSRF(cookieStr, proxyURL); e == nil {
 					body = buildBody(tok)
 					geminiHeaders = buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
+					geminiHeaders["x-goog-ext-525001261-jspb"] = modelHeader
 					attempt--
 					continue
 				}
@@ -561,6 +602,26 @@ func extractUpstreamModel(raw string) string {
 	return m[len(m)-1][1]
 }
 
+// buildModelHeader 拼 x-goog-ext-525001261-jspb，形状逐槽取自抓包：
+//
+//	[1,null,null,null,"<hex>",null,null,0,[4,5,6,8],null,null,1,null,null,<mode>,<think>,"<uuid>"]
+//	下标                4                8                          14      15       16
+//
+// 下标 14 跟 inner[79] 同值、下标 15 跟 inner[80] 同值、下标 16 跟 inner[59] 同值 ——
+// 也就是模型和思考模式在 header 和 payload 里各存一份。**服务端认的是 header**：
+// 只填 inner[80]=2 而 header 留最小形式，三个模型实测思考链全是 0 字符；这跟模型
+// 选择本身"header 压过 inner[79]"是同一个规律。
+//
+// uuid 留空时退回最小形式（匿名路径不需要这些槽位，少发一截更省事）。
+func buildModelHeader(hexID string, mode, think int, uuid string) string {
+	if uuid == "" {
+		return fmt.Sprintf(`[1,null,null,null,"%s"]`, hexID)
+	}
+	return fmt.Sprintf(
+		`[1,null,null,null,"%s",null,null,0,[4,5,6,8],null,null,1,null,null,%d,%d,"%s"]`,
+		hexID, mode, think, uuid)
+}
+
 // buildGeminiHeaders 准备 StreamGenerate 必需的应用层 header。
 // hexID 决定服务端用哪个模型；留空则服务端一律回落到 3.5 Flash-Lite。
 func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
@@ -574,7 +635,7 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 		"X-Goog-AuthUser": "0",
 	}
 	if hexID != "" {
-		h["x-goog-ext-525001261-jspb"] = fmt.Sprintf(`[1,null,null,null,"%s"]`, hexID)
+		h["x-goog-ext-525001261-jspb"] = buildModelHeader(hexID, 0, 0, "")
 	}
 	if cookieStr != "" {
 		h["Cookie"] = cookieStr
@@ -840,7 +901,7 @@ type ProbeResult struct {
 func probeGemini(prompt, proxyURL string) ProbeResult {
 	res := ProbeResult{Impersonate: rtCfg().Impersonate}
 
-	inner := make([]interface{}, 80)
+	inner := make([]interface{}, innerSlots)
 	inner[0] = []interface{}{prompt, 0, nil, nil, nil, nil, 0}
 	inner[1] = []interface{}{"en"}
 	inner[2] = []interface{}{"", "", "", nil, nil, nil, nil, nil, nil, ""}
