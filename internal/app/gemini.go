@@ -308,6 +308,8 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 	cookieStr, sapisid, xsrfToken := "", "", ""
 	var lastCookieErr error
 	tried := map[int64]bool{}
+	// 每个号只给一次「轮转后重试」的机会，避免在一个请求里反复打 accounts.google.com
+	rotatedOnce := map[int64]bool{}
 	for acct != nil && len(tried) < maxCookieTries {
 		tried[acct.ID] = true
 		// 归属先记上：这一轮失败了也留痕，面板上看得出是哪个号在坏
@@ -326,8 +328,29 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 			}
 			break
 		}
-		// 取不到 SNlM0e 基本等于这个 cookie 已失效（页面把我们当匿名用户了），
-		// 记一次失败让面板上看得出是哪个号该换了，然后换下一个。
+		// 取不到 SNlM0e 基本等于这个 cookie 已失效（页面把我们当匿名用户了）。
+		// 换号之前先给它一次机会：强制轮转一次再重取。
+		//
+		// 轮转会把上游刷新的 *SIDCC 合并回来，而 cookie 就是因为一直发旧值才被判成
+		// 过期会话的 —— 陈旧到这一步还能救回来的号，直接换掉等于白白丢一个。
+		// 只试一次，且只在这一轮：救不回来说明不是陈旧问题。
+		if !rotatedOnce[acct.ID] {
+			rotatedOnce[acct.ID] = true
+			if _, rerr := rotateAccount(*acct); rerr == nil {
+				if fresh := accountByID(acct.ID); fresh != nil {
+					if tok2, err2 := getXSRF(fresh.Cookie, proxyURL); err2 == nil {
+						logf("[cookie] 账号 #%d 轮转后恢复可用", acct.ID)
+						acct = fresh
+						cookieStr, sapisid, xsrfToken = fresh.Cookie, extractSAPISID(fresh.Cookie), tok2
+						if fresh.ProxyID == 0 || !proxyUsableByID(fresh.ProxyID) {
+							bindAccountProxy(fresh.ID, picked.ID)
+						}
+						break
+					}
+				}
+			}
+		}
+		// 救不回来：记一次失败让面板上看得出是哪个号该换了，然后换下一个。
 		markCookieByStatus(acct.ID, 401, err.Error())
 		lastCookieErr = err
 		logf("[cookie] 账号 #%d 不可用，换下一个：%v", acct.ID, err)

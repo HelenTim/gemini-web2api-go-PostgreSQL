@@ -132,6 +132,23 @@ func accountList() []CookieAccount {
 	return out
 }
 
+// accountByID 按 id 取一条，取不到返回 nil。
+//
+// 轮转会把新 cookie 写回库里，之后要用**库里那份**继续发请求 —— 手上那个
+// CookieAccount 是轮转之前的快照，接着用等于把刚刷新的值扔掉。
+func accountByID(id int64) *CookieAccount {
+	var a CookieAccount
+	err := getDB().QueryRow(
+		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count, proxy_id
+		 FROM accounts WHERE id=?`, id).
+		Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
+			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount, &a.ProxyID)
+	if err != nil {
+		return nil
+	}
+	return &a
+}
+
 // accountDelete 删除一条。
 func accountDelete(id int64) error {
 	_, err := getDB().Exec(`DELETE FROM accounts WHERE id=?`, id)
@@ -429,6 +446,36 @@ func markAccountResult(id int64, ok bool, errStr string) {
 	_, _ = getDB().Exec(
 		`UPDATE accounts SET fail_count=fail_count+1, last_error=? WHERE id=?`,
 		truncate(errStr, 200), id)
+	autoDisableIfDead(id)
+}
+
+// maxCookieAuthFailures 是连续几次鉴权失败之后自动停用账号。
+//
+// 只有 401/403 会累加 fail_count（见 markCookieByStatus），网络错误和被 Google 拦
+// 都不算，所以连着 3 次基本等于 cookie 真的没了。取 3 不取 1：偶发的 XSRF 页面抖动
+// 也会走到这条路上，一次就停用会误伤。
+const maxCookieAuthFailures = 3
+
+// autoDisableIfDead 把连续失败到头的账号停用。
+//
+// 为什么要自动停：挑号是 `ORDER BY fail_count ASC` ——坏号排在最后，但**池子里只剩
+// 坏号时它照样会被选中**，于是每个请求都要把它试一遍才轮到报错。而 fail_count 只有
+// 成功才清零，死号永远不会自己好，等于让每个请求都为它付一次 XSRF 往返。
+//
+// 停用而不是删除：cookie 是用户导入的数据，判断可能出错（比如出口连续被拦也可能
+// 表现成鉴权失败），留着让用户在面板上看到并自己决定。
+func autoDisableIfDead(id int64) {
+	var fails int64
+	var status string
+	err := getDB().QueryRow(`SELECT fail_count, status FROM accounts WHERE id=?`, id).
+		Scan(&fails, &status)
+	if err != nil || status != "enabled" || fails < maxCookieAuthFailures {
+		return
+	}
+	if _, err := getDB().Exec(
+		`UPDATE accounts SET status='disabled' WHERE id=? AND status='enabled'`, id); err == nil {
+		logf("[cookie] 账号 #%d 连续 %d 次鉴权失败，已自动停用", id, fails)
+	}
 }
 
 // CookieCheck 是一次 cookie 有效性检测的结果。
@@ -553,10 +600,40 @@ func mergeSetCookie(cookie string, setCookie []string) string {
 	return strings.Join(parts, "; ")
 }
 
+// cookieIdentity 取能代表"这是哪个账号"的那几项。
+//
+// SAPISID 用来算授权头、__Secure-1PSID 是会话主键，两者都不随刷新变化（2 小时
+// 抓包里 0 次变动，变的只有 *SIDCC 和 *SIDTS 那两族）。所以它们变了就说明这份
+// cookie 已经不是原来那个账号了。
+func cookieIdentity(cookie string) string {
+	var sapisid, psid string
+	for _, kv := range splitCookiePairs(cookie) {
+		switch kv[0] {
+		case "SAPISID":
+			sapisid = kv[1]
+		case "__Secure-1PSID":
+			psid = kv[1]
+		}
+	}
+	return sapisid + "|" + psid
+}
+
 // updateAccountCookie 把刷新后的 cookie 写回账号。
+//
+// 写之前先比对身份：合并 Set-Cookie 时上游理论上可以把整套会话换掉（比如响应里
+// 带了另一个账号的 SID），照单全收就等于把 A 号的凭据写进 B 号那一行。之后这个号
+// 在面板上显示的还是原来的标签，实际发出去的却是别人的会话，而且**完全静默**。
+// 身份对不上就不写，宁可让这次刷新白费。
 func updateAccountCookie(id int64, cookie string) {
 	if id <= 0 || cookie == "" {
 		return
+	}
+	var cur string
+	if err := getDB().QueryRow(`SELECT cookie FROM accounts WHERE id=?`, id).Scan(&cur); err == nil {
+		if got, want := cookieIdentity(cookie), cookieIdentity(cur); got != want {
+			logf("[cookie] 账号 #%d 的刷新结果身份对不上，已丢弃不写回", id)
+			return
+		}
 	}
 	_, _ = getDB().Exec(`UPDATE accounts SET cookie=? WHERE id=?`, cookie, id)
 }
