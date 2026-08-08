@@ -424,6 +424,7 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 	inner[68] = 1
 	inner[79] = mc.Mode
 	inner[80] = thinkingNormal
+	inner[91] = 0
 	inner[96] = 0
 	if mc.Thinking {
 		inner[80] = thinkingExtended
@@ -457,10 +458,13 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 	if mc.Thinking {
 		thinkVal = thinkingExtended
 	}
-	modelHeader := buildModelHeader(mc.HexID, mc.Mode, thinkVal, reqUUID)
+	// 抓包里 header 下标 16 和 inner[59] 是两个不同的 uuid，各生成各的。
+	modelHeader := buildModelHeader(mc.HexID, mc.Mode, thinkVal, uuid.NewString())
+	sessionHeader := fmt.Sprintf(`["%s",1]`, reqUUID)
 
 	geminiHeaders := buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
 	geminiHeaders["x-goog-ext-525001261-jspb"] = modelHeader
+	geminiHeaders["x-goog-ext-525005358-jspb"] = sessionHeader
 	var lastErr error
 	// 最后一次拿到的 HTTP 状态码，0 表示网络层就失败了没拿到响应。
 	// cookie 健康度只认 401/403，别的状态不算 cookie 的错，见 markCookieByStatus。
@@ -525,6 +529,7 @@ func streamGenerateWithFiles(prompt, latest string, mc ModelConfig, pending []pe
 					body = buildBody(tok)
 					geminiHeaders = buildGeminiHeaders(cookieStr, sapisid, mc.HexID)
 					geminiHeaders["x-goog-ext-525001261-jspb"] = modelHeader
+					geminiHeaders["x-goog-ext-525005358-jspb"] = sessionHeader
 					attempt--
 					continue
 				}
@@ -607,10 +612,12 @@ func extractUpstreamModel(raw string) string {
 //	[1,null,null,null,"<hex>",null,null,0,[4,5,6,8],null,null,1,null,null,<mode>,<think>,"<uuid>"]
 //	下标                4                8                          14      15       16
 //
-// 下标 14 跟 inner[79] 同值、下标 15 跟 inner[80] 同值、下标 16 跟 inner[59] 同值 ——
-// 也就是模型和思考模式在 header 和 payload 里各存一份。**服务端认的是 header**：
-// 只填 inner[80]=2 而 header 留最小形式，三个模型实测思考链全是 0 字符；这跟模型
-// 选择本身"header 压过 inner[79]"是同一个规律。
+// 下标 14 跟 inner[79] 同值、下标 15 跟 inner[80] 同值 —— 模型和思考模式在 header 和
+// payload 里各存一份。**服务端认的是 header**：只填 inner[80]=2 而 header 留最小形式，
+// 三个模型实测思考链全是 0 字符；这跟模型选择本身"header 压过 inner[79]"是同一个规律。
+//
+// 下标 16 是**另一个** uuid，跟 inner[59] 不是一个值 —— 跟 inner[59] 同值的是
+// x-goog-ext-525005358-jspb。两份抓包都是这个规律，别图省事复用同一个。
 //
 // uuid 留空时退回最小形式（匿名路径不需要这些槽位，少发一截更省事）。
 func buildModelHeader(hexID string, mode, think int, uuid string) string {
@@ -633,6 +640,9 @@ func buildGeminiHeaders(cookieStr, sapisid, hexID string) map[string]string {
 		"Referer":         "https://gemini.google.com/app",
 		"X-Same-Domain":   "1",
 		"X-Goog-AuthUser": "0",
+		// 这两个浏览器每次都发，值是固定的。
+		"x-goog-ext-73010989-jspb": "[0]",
+		"x-goog-ext-73010990-jspb": "[0,0,0]",
 	}
 	if hexID != "" {
 		h["x-goog-ext-525001261-jspb"] = buildModelHeader(hexID, 0, 0, "")
