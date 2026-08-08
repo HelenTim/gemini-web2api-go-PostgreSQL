@@ -37,6 +37,7 @@ This is not a wrapper around Google's official API ([generativelanguage.googleap
 **Models**
 - `gemini-3.6-flash` and `gemini-3.5-flash-lite` work anonymously, web search included
 - `gemini-3.1-pro` needs a cookie; every reply carries a reasoning chain
+- Each of the three models has a `-thinking` variant (extended thinking), available with a cookie
   (`reasoning_content`)
 - Every response records which model the backend **actually** used, so silent
   downgrades are visible
@@ -196,6 +197,9 @@ Gemini's backend only recognises three models (the list comes from `batchexecute
 | `gemini-3.6-flash` | All-round, default |
 | `gemini-3.5-flash-lite` | Fast and lightweight |
 | `gemini-3.1-pro` | Most capable, **needs a cookie**; every reply carries a reasoning chain |
+| `gemini-3.6-flash-thinking` | 3.6 Flash with extended thinking; **needs a cookie** |
+| `gemini-3.5-flash-lite-thinking` | 3.5 Flash-Lite with extended thinking; **needs a cookie** |
+| `gemini-3.1-pro-thinking` | 3.1 Pro with extended thinking; **needs a cookie** |
 
 Without a cookie, `/v1/models` returns only the first two, and asking for `gemini-3.1-pro` fails with an explanation. An anonymous request for it is always silently downgraded to 3.5 Flash-Lite — better to fail at model selection than to hand back a reply that "succeeded" but isn't Pro.
 
@@ -236,7 +240,7 @@ you do want to bill for it.
 
 Anonymous calls (no cookie) only reach the two text models above plus Gemini's built-in web search. `gemini-3.1-pro` is silently downgraded to 3.5 Flash-Lite anonymously, which is why it isn't exposed at all in that case.
 
-Attaching a cookie additionally unlocks `gemini-3.1-pro` and its reasoning chain, **image input**, and **a longer context** (over-long conversations are sent as a text attachment, see below).
+Attaching a cookie additionally unlocks `gemini-3.1-pro`, **extended thinking for all three models**, **image input**, and **a longer context** (over-long conversations are sent as a text attachment, see below).
 
 Image generation, music, video, deep research and canvas also need a signed-in session but **are not implemented here** — they require extra tool slots in the request parameter array that this project does not send yet. The panel's "actual model" column always shows which model the backend really used, so any downgrade is visible.
 
