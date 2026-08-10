@@ -174,6 +174,38 @@ Every OpenAI-compatible client (Cherry Studio / ChatBox / Open WebUI / dify / Cu
 
 There is also an unauthenticated health check at `GET /` returning `{"status":"ok","version":…,"models":[…]}`.
 
+## MCP (web_search tool)
+
+Besides the OpenAI API, the same process and port also serves an **MCP server** at `/mcp`,
+exposing Gemini's web-grounded **search** as a `web_search` tool. This lets MCP clients
+(Claude Desktop / Claude Code / Cursor) "search the web through Gemini" and get a
+**synthesized answer plus source links** back.
+
+No separate process or deployment — running the backend gives you this. The transport is
+HTTP (Streamable HTTP), so remote clients just point at the URL, reusing the backend's
+account pool / proxy pool / rate limiting. Search works anonymously; no cookie required.
+
+**Client config** (Claude Desktop's `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "gemini-search": {
+      "url": "http://your-server:8083/mcp",
+      "headers": { "Authorization": "Bearer sk-gemini-your-key" }
+    }
+  }
+}
+```
+
+- `url` points at the backend's `/mcp`; locally it's `http://localhost:8083/mcp`.
+- `Authorization` is the same API key as the OpenAI endpoint (shown on the Settings page).
+- Claude Code: `claude mcp add --transport http gemini-search http://localhost:8083/mcp --header "Authorization: Bearer sk-gemini-your-key"`.
+
+The `web_search(query)` tool takes a query/question and returns Gemini's web-grounded
+answer with a `Sources:` list appended. It's the only tool for now (`url_context` — reading
+a specific URL's content — is not implemented yet).
+
 ## Admin panel
 
 `http://localhost:8083/admin`, log in with `--admin-token`.

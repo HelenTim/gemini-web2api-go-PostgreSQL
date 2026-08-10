@@ -171,6 +171,35 @@ OpenAI 形状的接口，没做 `/v1beta`。
 
 另有一个不鉴权的健康检查 `GET /`，返回 `{"status":"ok","version":…,"models":[…]}`，给探活用。
 
+## MCP（web_search 工具）
+
+除了 OpenAI 接口，同一个进程、同一个端口还挂了一个 **MCP server**，在 `/mcp` 上，
+把 Gemini 网页端的**联网搜索**暴露成一个 `web_search` 工具。让 Claude Desktop /
+Claude Code / Cursor 这类 MCP 客户端能「用 Gemini 去搜网」，返回**合成答案 + 来源链接**。
+
+不用单独起进程、不用额外部署——起了后端就有。传输是 HTTP（Streamable HTTP），
+所以远程客户端连 URL 就能用，复用后端的账号池 / 代理池 / 限流。匿名即可搜，不必挂 cookie。
+
+**客户端配置**（以 Claude Desktop 的 `claude_desktop_config.json` 为例）：
+
+```json
+{
+  "mcpServers": {
+    "gemini-search": {
+      "url": "http://你的服务器:8083/mcp",
+      "headers": { "Authorization": "Bearer sk-gemini-你的key" }
+    }
+  }
+}
+```
+
+- `url` 指向后端的 `/mcp`；本机跑就是 `http://localhost:8083/mcp`。
+- `Authorization` 填 OpenAI 接口那把同样的 API key（面板「设置」页里看）。
+- Claude Code：`claude mcp add --transport http gemini-search http://localhost:8083/mcp --header "Authorization: Bearer sk-gemini-你的key"`。
+
+工具 `web_search(query)`：传一个查询/问题，返回 Gemini 联网查证后的答案，末尾附
+`Sources:` 来源清单。当前只有这一个工具（读取指定 URL 的 `url_context` 暂未做）。
+
 ## 管理面板
 
 `http://localhost:8083/admin`，用 `--admin-token` 登录。
