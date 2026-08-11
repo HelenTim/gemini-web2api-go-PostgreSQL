@@ -2,6 +2,26 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 4.3.0
+
+### 新增
+
+- **MCP server（web_search）**。除了 OpenAI 接口，同一个进程、同一个端口现在还挂了一个
+  MCP server 在 `/mcp` 上，把 Gemini 网页端的联网搜索暴露成一个 `web_search` 工具，
+  让 Claude Desktop / Claude Code / Cursor 这类 MCP 客户端「用 Gemini 去搜网」，
+  返回合成答案 + 来源链接。
+
+  传输走 HTTP（Streamable HTTP），部署成服务器后远程客户端连 URL 就能用，复用后端的
+  账号池 / 代理池 / 限流；匿名即可搜，不必挂 cookie。用同一把 API key 鉴权
+  （`Authorization: Bearer <key>`）。手写 JSON-RPC 2.0，不引第三方 SDK。
+
+  客户端配置见 README 的「MCP」一节。`web_search(query)` 返回答案，末尾附 `Sources:`
+  来源清单。
+
+- **解析联网搜索的来源**。以前只返回答案文本，把 grounding 来源丢了；现在从响应帧里
+  抠出每条来源的 url / 标题 / 摘要，去掉 URL 尾部的 `#:~:text=` 片段锚。当前用在 MCP
+  的 `web_search` 上，OpenAI 接口的响应不受影响。
+
 ## 4.2.0
 
 ### 新增
