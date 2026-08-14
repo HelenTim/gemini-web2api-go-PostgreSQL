@@ -8,11 +8,12 @@ FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
-# Cache deps separately for faster rebuilds
-COPY go.mod go.sum ./
-RUN go mod download
-
+# 整个源码先拷进来：`go mod tidy` 要解析 import 才能补全 go.mod/go.sum。
+# 依赖若没在本地先 tidy 过，这里会自动补齐（pgx 的传递依赖 + 校验和），
+# 所以 CI / Render 构建不用依赖本地提交过 go.sum。
 COPY . .
+
+RUN go mod tidy
 
 # TARGETARCH 由 buildx 注入(amd64 / arm64 ...)。经典 builder 不注入,兜底 amd64。
 ARG TARGETARCH
