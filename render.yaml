@@ -15,9 +15,7 @@ services:
     healthCheckPath: /
     envVars:
       - key: DATABASE_URL
-        sync: false
         # 换成你的 Neon 连接串（自带 sslmode=require，别去掉）。
         value: postgres://user:password@ep-xxx.ap-southeast-1.aws.neon.tech/db?sslmode=require
       - key: ADMIN_TOKEN
-        sync: false
         value: change-me-in-production
