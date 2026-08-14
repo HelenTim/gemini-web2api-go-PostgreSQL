@@ -2,7 +2,7 @@
 
 1、打开 render.com →右上角 New → Blueprint
 
-2、选你的 GitHub 仓库，导入仓库根目录的 render.yaml/
+2、选你的 GitHub 仓库，导入仓库根目录的 render.yaml
 
 3、导入后进服务 → Environment，填两个变量：
 
