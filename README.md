@@ -6,7 +6,7 @@
 
 3、导入后进服务 → Environment，填两个变量：
 
-- DATABASE_URL = 上面 Neon 的连接串（PostgreSQL数据库）
+- DATABASE_URL = 数据库连接串（PostgreSQL数据库）
 - ADMIN_TOKEN = 你自己设一个面板口令（登录密码）
 
 
