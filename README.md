@@ -8,7 +8,7 @@
 
 中文 | [English](README_EN.md)
 
-把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑），**Chrome 146 真指纹**，**SQLite 持久化**，自带**中文管理面板**。
+把 Google Gemini 网页端反代成 OpenAI 兼容 API。**单二进制**，**零账号**（匿名可跑），**Chrome 146 真指纹**，**PostgreSQL 持久化**，自带**中文管理面板**。
 
 ---
 
@@ -47,7 +47,7 @@
 
 **运维**
 - 单二进制，交叉编译 6 平台；容器镜像基于 distroless
-- SQLite 持久化：30 天请求明细 + 永久聚合统计
+- PostgreSQL 持久化：30 天请求明细 + 永久聚合统计（Neon / Render / Supabase 等托管库或自建库均可）
 - 中文管理面板：概览 / 请求记录 / 代理池 / Cookie 池 / 设置，配置改完即时生效
 - **prompt 和回复内容永不入库**，只存元数据（长度、耗时、模型、状态）
 
@@ -63,14 +63,19 @@ chmod +x gemini-web2api-go_*
 ./gemini-web2api-go_* --port 8083 --admin-token your-admin-token
 ```
 
-数据默认落在 `./data/gemini.db`，换位置加 `--db /your/path.db`。
+数据存 PostgreSQL，连接串通过 `DATABASE_URL` 环境变量（或 `config.json` 的 `database_url`）提供：
+
+```bash
+export DATABASE_URL="postgres://user:password@host:5432/db?sslmode=require"
+./gemini-web2api-go_* --port 8083 --admin-token your-admin-token
+```
 
 ### Docker（不用源码）
 
 ```bash
 docker run -d --name gemini-web2api \
   -p 127.0.0.1:8083:8083 \
-  -v "$PWD/data:/data" \
+  -e DATABASE_URL="postgres://user:password@host:5432/db?sslmode=require" \
   -e ADMIN_TOKEN=your-admin-token \
   ghcr.io/zexadev/gemini-web2api-go:latest
 ```
@@ -79,6 +84,7 @@ docker run -d --name gemini-web2api \
 
 ```bash
 curl -O https://raw.githubusercontent.com/zexadev/gemini-web2api-go/main/docker-compose.yml
+DATABASE_URL="postgres://user:password@host:5432/db?sslmode=require" \
 ADMIN_TOKEN=your-admin-token docker compose up -d
 ```
 
@@ -103,7 +109,7 @@ gemini-web2api-go v4.0.0
   Base URL:    http://localhost:8083/v1
   API key:     sk-gemini-XX...XXXX  (mutable in admin UI)
   Admin UI:    http://localhost:8083/admin  (token auth)
-  DB:          ./data/gemini.db
+  DB:          postgres://user:****@host:5432/db
   Models:      [gemini-3.5-flash-lite gemini-3.6-flash]
   Cookie:      none (anonymous)
   Proxy:       none
@@ -337,8 +343,8 @@ I've successfully defined..."
 
 | 项 | 位置 |
 |---|---|
-| 监听端口 | `ports` + `command: --port` |
-| 数据库路径 | `volumes` + `command: --db` |
+| 监听端口 | `ports` + `command: --port`（Render 上自动用 `PORT`） |
+| 数据库连接串 | `environment` 的 `DATABASE_URL` |
 | `ADMIN_TOKEN` | `environment`，面板登录 token |
 
 `API_KEY` 环境变量会锁死 API key（面板改不了），用于不希望运行时被改的部署。
@@ -360,7 +366,7 @@ Cookie 池（按 URL、cookie 内容去重），之后一律从面板管理。�
 |---|---|
 | `--port` | 监听端口，默认 8083 |
 | `--config` | 指定 `config.json` 路径 |
-| `--db` | SQLite 路径，默认 `./data/gemini.db` |
+| `--db` | PostgreSQL 连接串（等价于 `DATABASE_URL` / `database_url`） |
 | `--admin-token` | 面板登录 token，留空 = 面板不鉴权（只有绑 127.0.0.1 才可接受） |
 | `--api-key` | 锁定 `/v1/*` 的 key（面板改不了），等价于 `API_KEY` 环境变量 |
 | `--cookie-file` | 启动时把文件里的 cookie 导入 Cookie 池 |
@@ -513,6 +519,23 @@ Chrome 指纹得有别的理由（比如担心长期账号画像），不能指�
 | Vision / 图片输入 | ⚠️ | **挂 cookie 时可用**：`image_url`（chat）和 `input_image`（responses）都认，支持 `data:` URL 和 http(s) 链接，单张 12MB 封顶。匿名态返回 400——匿名**能**把图传上去（`content-push.googleapis.com/upload/` 两步 resumable），但对话里引用被上游拒绝（`BardErrorInfo 1100`） |
 | Audio | ❌ | 传 `input_audio` 返回 400。网页端有音乐生成（Lyria 3），需要登录态 |
 
+## 部署到 Render（Neon PostgreSQL）
+
+Render 的免费实例没有持久化磁盘，SQLite 会随重启丢失，所以配一个托管 PostgreSQL。
+这里用 [Neon](https://console.neon.tech/) 的免费库，两步接上：
+
+1. **Neon 建库**：在 console.neon.tech 建一个 project，复制它的连接串，形如
+   `postgres://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/db?sslmode=require`。
+2. **Render 建服务**：用仓库里的 `render.yaml`（Blueprint）一键导入，或手动新建 Web Service：
+   - Build 用仓库根目录的 `Dockerfile`
+   - 环境变量加一条 `DATABASE_URL`，值填上面 Neon 的连接串
+   - 端口不用管，应用会自动读 Render 注入的 `PORT`
+
+`render.yaml` 里已把 `DATABASE_URL`、`ADMIN_TOKEN` 两条环境变量写好占位，
+`git push` 后在 Render 选「New → Blueprint」导入，再把值填上即可。
+
+> Neon 连接串默认就是 `sslmode=require`，别去掉，否则连不上。
+
 ## 项目结构
 
 ```
@@ -529,7 +552,7 @@ internal/app/              全部实现
   ratelimit.go             每 IP slot 独立并发 / RPM / RPH 限流
   tokenizer.go             tiktoken cl100k_base 单例
   apikey.go                API key（启动参数锁定 / 面板可轮换 双轨）
-  db.go                    SQLite schema：sessions / requests / accounts / kv
+  db.go                    PostgreSQL schema：sessions / requests / accounts / kv
   proxy.go                 代理池 CRUD + 容量调度 + 熔断
   cookie_pool.go           Cookie 池数据层（CRUD + 最久未用优先挑选 + 健康度回写 + 刷新项合并）
   rotate.go                会话保活（accounts.google.com/RotateCookies，间隔由服务端指定）
@@ -545,7 +568,7 @@ internal/app/              全部实现
   admin_ui/                管理面板前端（单页 + Chart.js，随二进制打包，不走 CDN）
   gemini_test.go           协议层单测：payload 槽位、wrb.fr 解析、模型门控、限流
 Dockerfile                 多阶段构建（alpine builder → distroless runtime）
-docker-compose.yml         单容器，默认拉 ghcr 镜像，sqlite 挂 volume
+docker-compose.yml         单容器，默认拉 ghcr 镜像，PostgreSQL 走 DATABASE_URL
 .github/workflows/         docker.yml 推镜像 / release.yml 打 tag 发二进制
 ```
 
@@ -568,7 +591,7 @@ docker-compose.yml         单容器，默认拉 ghcr 镜像，sqlite 挂 volume
 | 面板诊断显示 **302 → `google.com/sorry/index`** | 这个出口 IP 被 Google 拦了（80-180 次请求后，取决于连接策略和出口质量） | 换出口/加代理。**是硬拦不是概率性**（被拦后 60 次探测零成功），原地重试没有意义 |
 | 偶发空响应、面板记为上游拒绝 | 上游瞬时拒绝（`1155`），没有可预测阈值，跟频率/并发/累积次数都无关 | 重发一次通常就好。**降 RPM 解决不了**，实测跟频率无关 |
 | 请求全部超时 | 本机到 `gemini.google.com` 不通 | 配代理（面板「代理池」或 `--proxy`）。注意**不读 `HTTPS_PROXY` 环境变量** |
-| 启动即退出，报 `unable to open database file (14)` | 容器以 nonroot(uid 65532) 运行，而 bind mount 的宿主目录属主是 root，写不进去 | 改用具名卷（compose 默认已是），或 `sudo chown -R 65532:65532 ./data` |
+| 启动即退出，报 `未配置数据库` | 没给 PostgreSQL 连接串 | 设 `DATABASE_URL`（或 `config.json` 的 `database_url` / `--db`），连不上多半是连接串里少了 `sslmode=require` 或账号密码不对 |
 | 选 `gemini-3.1-pro` 直接报错 | 没配 cookie 时它不暴露，这是故意的 | 挂 cookie（面板「设置」或「Cookie 池」）后即可用 |
 | 挂了 cookie 后请求全部 502 | cookie 已失效，取不到 XSRF token | 重新导出 cookie。判据：请求 `gemini-3.1-pro` 若回报 3.5 Flash-Lite 就是失效了 |
 | 面板打不开 / 401 | `--admin-token`（或 `ADMIN_TOKEN`）没对上 | token 留空则不鉴权，只有绑 127.0.0.1 时才可接受 |
@@ -579,7 +602,7 @@ Docker 用默认 bridge 网络时上游可能返回空内容（Google 拒绝某�
 
 - [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — Chrome 真指纹 TLS 库
 - [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
-- [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — 纯 Go SQLite（CGO-free，alpine 直接编）
+- [jackc/pgx](https://github.com/jackc/pgx) — PostgreSQL 驱动（纯 Go，CGO-free）
 
 ## License
 

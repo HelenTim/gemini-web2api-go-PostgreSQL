@@ -8,7 +8,7 @@
 
 [中文文档](README.md) | English
 
-Turn the Google Gemini web app into an OpenAI-compatible API. **Single binary**, **no account needed** (anonymous works), **real Chrome 146 fingerprint**, **SQLite persistence**, ships with an **admin dashboard**.
+Turn the Google Gemini web app into an OpenAI-compatible API. **Single binary**, **no account needed** (anonymous works), **real Chrome 146 fingerprint**, **PostgreSQL persistence**, ships with an **admin dashboard**.
 
 ---
 
@@ -51,7 +51,8 @@ This is not a wrapper around Google's official API ([generativelanguage.googleap
 
 **Operations**
 - Single binary, cross-compiled for 6 platforms; container image built on distroless
-- SQLite persistence: 30 days of per-request detail plus permanent aggregates
+- PostgreSQL persistence: 30 days of per-request detail plus permanent aggregates
+  (any hosted Postgres — Neon / Render / Supabase — or self-hosted)
 - Admin panel: overview / requests / proxy pool / cookie pool / settings, with
   config changes applied without a restart
 - **Prompt and response bodies are never stored** — metadata only (length, latency,
@@ -70,14 +71,20 @@ chmod +x gemini-web2api-go_*
 ./gemini-web2api-go_* --port 8083 --admin-token your-admin-token
 ```
 
-Data lands in `./data/gemini.db` by default; pass `--db /your/path.db` to move it.
+Data lives in PostgreSQL; supply the connection string via the `DATABASE_URL`
+environment variable (or `database_url` in `config.json`):
+
+```bash
+export DATABASE_URL="postgres://user:password@host:5432/db?sslmode=require"
+./gemini-web2api-go_* --port 8083 --admin-token your-admin-token
+```
 
 ### Docker (no source needed)
 
 ```bash
 docker run -d --name gemini-web2api \
   -p 127.0.0.1:8083:8083 \
-  -v "$PWD/data:/data" \
+  -e DATABASE_URL="postgres://user:password@host:5432/db?sslmode=require" \
   -e ADMIN_TOKEN=your-admin-token \
   ghcr.io/zexadev/gemini-web2api-go:latest
 ```
@@ -86,6 +93,7 @@ For compose, just grab the file — no clone required:
 
 ```bash
 curl -O https://raw.githubusercontent.com/zexadev/gemini-web2api-go/main/docker-compose.yml
+DATABASE_URL="postgres://user:password@host:5432/db?sslmode=require" \
 ADMIN_TOKEN=your-admin-token docker compose up -d
 ```
 
@@ -111,7 +119,7 @@ gemini-web2api-go v4.0.0
   Base URL:    http://localhost:8083/v1
   API key:     sk-gemini-XX...XXXX  (mutable in admin UI)
   Admin UI:    http://localhost:8083/admin  (token auth)
-  DB:          ./data/gemini.db
+  DB:          postgres://user:****@host:5432/db
   Models:      [gemini-3.5-flash-lite gemini-3.6-flash]
   Cookie:      none (anonymous)
   Proxy:       none
@@ -317,8 +325,8 @@ What's left is only what requires restarting the process:
 
 | Item | Where |
 |---|---|
-| Listening port | `ports` + `command: --port` |
-| Database path | `volumes` + `command: --db` |
+| Listening port | `ports` + `command: --port` (on Render the injected `PORT` is used automatically) |
+| Database URL | `environment` → `DATABASE_URL` |
 | `ADMIN_TOKEN` | `environment`, the panel login token |
 
 The `API_KEY` environment variable pins the API key (the panel can't change it), for deployments that must not be changed at runtime.
@@ -335,7 +343,7 @@ All flags:
 |---|---|
 | `--port` | listening port, default 8083 |
 | `--config` | path to `config.json` |
-| `--db` | SQLite path, default `./data/gemini.db` |
+| `--db` | PostgreSQL connection string (same as `DATABASE_URL` / `database_url`) |
 | `--admin-token` | panel login token; empty = no auth (only acceptable when bound to 127.0.0.1) |
 | `--api-key` | pins the `/v1/*` key so the panel can't change it, same as the `API_KEY` env var |
 | `--cookie-file` | imports the cookie in this file into the cookie pool at startup |
@@ -454,6 +462,23 @@ This does not change the blocking threshold, though: in a same-start comparison,
 | Vision / image input | ⚠️ | **Works with a cookie**: both `image_url` (chat) and `input_image` (responses) are accepted, from `data:` URLs or http(s) links, up to 12MB per image. Anonymous returns 400 — anonymous upload **does** work (`content-push.googleapis.com/upload/`, two-step resumable), but referencing the uploaded file in a conversation is refused upstream (`BardErrorInfo 1100`) |
 | Audio | ❌ | Sending `input_audio` returns 400. The web app has music generation (Lyria 3), signed-in only |
 
+## Deploying to Render (Neon PostgreSQL)
+
+Render's free tier has no persistent disk, so SQLite would be wiped on every restart —
+point the app at a hosted PostgreSQL instead. With [Neon](https://console.neon.tech/):
+
+1. **Neon**: create a project and copy its connection string, e.g.
+   `postgres://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/db?sslmode=require`.
+2. **Render**: use the repo's `render.yaml` (Blueprint) to import, or create a Web Service manually:
+   - Build from the root `Dockerfile`
+   - Add a `DATABASE_URL` environment variable with the Neon connection string
+   - Leave the port alone — the app reads Render's injected `PORT` automatically
+
+`render.yaml` already declares the `DATABASE_URL` and `ADMIN_TOKEN` env vars as
+placeholders: `git push`, then in Render pick "New → Blueprint" and fill in the values.
+
+> Neon connection strings already include `sslmode=require` — don't strip it or the connection will fail.
+
 ## Project layout
 
 ```
@@ -470,7 +495,7 @@ internal/app/              everything else
   ratelimit.go             per-IP-slot concurrency / RPM / RPH
   tokenizer.go             tiktoken cl100k_base singleton
   apikey.go                API key (locked by flag / rotatable from the panel)
-  db.go                    SQLite schema: sessions / requests / accounts / kv
+  db.go                    PostgreSQL schema: sessions / requests / accounts / kv
   proxy.go                 proxy pool CRUD + capacity scheduling + circuit breaker
   cookie_pool.go           cookie pool data layer (CRUD + least-recently-used pick + health writeback + refresh merge)
   rotate.go                session keepalive (accounts.google.com/RotateCookies, server-dictated interval)
@@ -486,7 +511,7 @@ internal/app/              everything else
   admin_ui/                admin panel frontend (single page + Chart.js, embedded, no CDN)
   gemini_test.go           protocol-layer tests: payload slots, wrb.fr parsing, model gating, rate limits
 Dockerfile                 multi-stage (alpine builder → distroless runtime)
-docker-compose.yml         single container, pulls the ghcr image by default, sqlite on a volume
+docker-compose.yml         single container, pulls the ghcr image by default, PostgreSQL via DATABASE_URL
 .github/workflows/         docker.yml pushes images / release.yml publishes binaries on tag
 ```
 
@@ -509,7 +534,7 @@ docker-compose.yml         single container, pulls the ghcr image by default, sq
 | Panel diagnostics show **302 → `google.com/sorry/index`** | This exit IP is blocked by Google (after 80-180 requests, depending on connection strategy and exit quality) | Change exit / add proxies. **The block is hard, not probabilistic** (60 probes after a block, zero successes), so retrying in place is pointless |
 | Occasional empty responses, logged as an upstream refusal | Upstream transient refusal (`1155`). There is no predictable threshold — it correlates with neither rate, concurrency, nor cumulative count | Resend once and it usually works. **Lowering RPM does not help**: measured, it is unrelated to request rate |
 | Every request times out | This host can't reach `gemini.google.com` | Configure a proxy (panel or `--proxy`). Note that **`HTTPS_PROXY` is not read** |
-| Exits at startup with `unable to open database file (14)` | The container runs as nonroot (uid 65532) but the bind-mounted host directory is owned by root, so it can't be written | Use a named volume (the default in compose), or `sudo chown -R 65532:65532 ./data` |
+| Exits at startup with `未配置数据库` | No PostgreSQL connection string was supplied | Set `DATABASE_URL` (or `database_url` / `--db`); if it connects but fails, the URL is likely missing `sslmode=require` or has wrong credentials |
 | `gemini-3.1-pro` errors out immediately | It isn't exposed without a cookie, by design | Add an account on the Cookie pool page and it becomes available |
 | Every request returns 502 after attaching a cookie | The cookie expired, so the XSRF token can't be fetched | Re-export the cookie. Quick check: if `gemini-3.1-pro` reports 3.5 Flash-Lite, it's expired |
 | Panel won't open / 401 | `--admin-token` (or `ADMIN_TOKEN`) doesn't match | An empty token disables auth, which is only acceptable when bound to 127.0.0.1 |
@@ -520,7 +545,7 @@ With Docker's default bridge network, upstream may return empty content (Google 
 
 - [bogdanfinn/tls-client](https://github.com/bogdanfinn/tls-client) — real Chrome TLS fingerprints
 - [pkoukk/tiktoken-go](https://github.com/pkoukk/tiktoken-go) — BPE tokenizer
-- [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) — pure-Go SQLite (CGO-free, builds straight on alpine)
+- [jackc/pgx](https://github.com/jackc/pgx) — PostgreSQL driver (pure Go, CGO-free)
 
 ## License
 

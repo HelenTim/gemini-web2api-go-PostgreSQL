@@ -1,7 +1,7 @@
 {
   "port": 8083,
   "host": "0.0.0.0",
-  "db_path": "./data/gemini.db",
+  "database_url": "postgres://user:password@host:5432/database?sslmode=require",
   "admin_enabled": true,
   "admin_token": "",
   "impersonate": "chrome_146",

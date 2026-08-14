@@ -50,14 +50,14 @@ func startScheduler() {
 // hour up to (now - 1h), so a long downtime catches up cleanly.
 func aggregateHourlyCatchup() {
 	var lastBucket int64
-	_ = getDB().QueryRow(`SELECT IFNULL(MAX(bucket), 0) FROM stats_hourly`).Scan(&lastBucket)
+	_ = getDB().QueryRow(`SELECT COALESCE(MAX(bucket), 0) FROM stats_hourly`).Scan(&lastBucket)
 	now := time.Now().Unix()
 	currentHourStart := now - (now % 3600)
 	target := currentHourStart - 3600 // most recent CLOSED hour
 	if lastBucket == 0 {
 		// First run — bootstrap from oldest request available.
 		var minTS int64
-		_ = getDB().QueryRow(`SELECT IFNULL(MIN(ts), 0) FROM requests`).Scan(&minTS)
+		_ = getDB().QueryRow(`SELECT COALESCE(MIN(ts), 0) FROM requests`).Scan(&minTS)
 		if minTS == 0 {
 			return
 		}
@@ -70,13 +70,13 @@ func aggregateHourlyCatchup() {
 
 func aggregateDailyCatchup() {
 	var lastBucket int64
-	_ = getDB().QueryRow(`SELECT IFNULL(MAX(bucket), 0) FROM stats_daily`).Scan(&lastBucket)
+	_ = getDB().QueryRow(`SELECT COALESCE(MAX(bucket), 0) FROM stats_daily`).Scan(&lastBucket)
 	now := time.Now().Unix()
 	currentDayStart := now - (now % 86400)
 	target := currentDayStart - 86400
 	if lastBucket == 0 {
 		var minTS int64
-		_ = getDB().QueryRow(`SELECT IFNULL(MIN(bucket), 0) FROM stats_hourly`).Scan(&minTS)
+		_ = getDB().QueryRow(`SELECT COALESCE(MIN(bucket), 0) FROM stats_hourly`).Scan(&minTS)
 		if minTS == 0 {
 			return
 		}
@@ -93,7 +93,7 @@ func aggregateDailyCatchup() {
 func aggregateBucket(start, span int64, target string) {
 	end := start + span
 
-	// We pre-aggregate latencies in Go to compute p50/p95 (SQLite percentile is awkward).
+		// We pre-aggregate latencies in Go to compute p50/p95 (portable across backends).
 	type key struct {
 		model string
 		proxy int64
@@ -114,14 +114,14 @@ func aggregateBucket(start, span int64, target string) {
 
 	if target == "stats_hourly" {
 		// from raw requests
-		r, e := getDB().Query(`SELECT model, IFNULL(proxy_id,0), status, total_ms, prompt_tokens, output_tokens
-			FROM requests WHERE ts >= ? AND ts < ?`, start, end)
+		r, e := getDB().Query(`SELECT model, COALESCE(proxy_id,0), status, total_ms, prompt_tokens, output_tokens
+			FROM requests WHERE ts >= $1 AND ts < $2`, start, end)
 		err = e
 		rows = r
 	} else {
 		// from hourly aggregates
 		r, e := getDB().Query(`SELECT model, proxy_id, requests, successes, failures, total_ms, prompt_tokens, output_tokens, p50_ms, p95_ms
-			FROM stats_hourly WHERE bucket >= ? AND bucket < ?`, start, end)
+			FROM stats_hourly WHERE bucket >= $1 AND bucket < $2`, start, end)
 		err = e
 		rows = r
 	}
@@ -207,9 +207,13 @@ func aggregateBucket(start, span int64, target string) {
 			if a.p95N > 0 {
 				p95 = a.p95Sum / a.p95N
 			}
-			_, _ = tx.Exec(`INSERT OR REPLACE INTO stats_daily(bucket, model, proxy_id,
+			_, _ = tx.Exec(`INSERT INTO stats_daily(bucket, model, proxy_id,
                 requests, successes, failures, total_ms, p50_ms, p95_ms, prompt_tokens, output_tokens)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                ON CONFLICT (bucket, model, proxy_id) DO UPDATE SET
+                requests=excluded.requests, successes=excluded.successes, failures=excluded.failures,
+                total_ms=excluded.total_ms, p50_ms=excluded.p50_ms, p95_ms=excluded.p95_ms,
+                prompt_tokens=excluded.prompt_tokens, output_tokens=excluded.output_tokens`,
 				start, k.model, k.proxy,
 				a.count, a.success, a.fail, a.totalMs, p50, p95, a.promptT, a.outT)
 		}
@@ -224,9 +228,13 @@ func aggregateBucket(start, span int64, target string) {
 	}
 	for k, a := range groups {
 		p50, p95 := percentiles(a.latencies)
-		_, _ = tx.Exec(`INSERT OR REPLACE INTO stats_hourly(bucket, model, proxy_id,
+		_, _ = tx.Exec(`INSERT INTO stats_hourly(bucket, model, proxy_id,
             requests, successes, failures, total_ms, p50_ms, p95_ms, prompt_tokens, output_tokens)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            ON CONFLICT (bucket, model, proxy_id) DO UPDATE SET
+            requests=excluded.requests, successes=excluded.successes, failures=excluded.failures,
+            total_ms=excluded.total_ms, p50_ms=excluded.p50_ms, p95_ms=excluded.p95_ms,
+            prompt_tokens=excluded.prompt_tokens, output_tokens=excluded.output_tokens`,
 			start, k.model, k.proxy,
 			a.count, a.success, a.fail, a.totalMs, p50, p95, a.promptT, a.outT)
 	}
@@ -253,7 +261,7 @@ func retentionSweep() {
 		return
 	}
 	cutoff := time.Now().Unix() - int64(rtCfg().RetentionDays)*86400
-	res, err := getDB().Exec(`DELETE FROM requests WHERE ts < ?`, cutoff)
+	res, err := getDB().Exec(`DELETE FROM requests WHERE ts < $1`, cutoff)
 	if err != nil {
 		logf("[retention] failed: %v", err)
 		return
@@ -262,5 +270,5 @@ func retentionSweep() {
 	if n > 0 {
 		logf("[retention] purged %d old request rows", n)
 	}
-	_, _ = getDB().Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().Unix())
+	_, _ = getDB().Exec(`DELETE FROM sessions WHERE expires_at < $1`, time.Now().Unix())
 }

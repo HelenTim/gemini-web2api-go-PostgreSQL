@@ -36,11 +36,11 @@ var (
 // acquireSlot 用 len(proxyCache)==0 判断"没配代理池"，于是**池子一空就退回直连**
 // —— 部署者的真实 IP 直接暴露给上游，日志上只看到偶发的直连请求。
 //
-// 这条路径每个请求都会走（recordProxyResult 结束就调），而 WAL 模式下并发
-// UPDATE 期间 rows.Next() 完全可能返回 SQLITE_BUSY，所以"偶发"就是这么来的。
+// 这条路径每个请求都会走（recordProxyResult 结束就调），读失败宁可保留旧池子
+// 也不退回直连。
 func loadProxies() {
 	rows, err := getDB().Query(`SELECT id, name, url, enabled, weight, fail_count,
-        IFNULL(last_used,0), IFNULL(last_error,''), created_at FROM proxies ORDER BY id`)
+        COALESCE(last_used,0), COALESCE(last_error,''), created_at FROM proxies ORDER BY id`)
 	if err != nil {
 		logf("[proxy] 读取失败，保留上一次的代理池: %v", err)
 		return
@@ -286,8 +286,9 @@ func pickProxyPreferring(preferID int64) (Proxy, bool) {
 // recordProxyResult 回写一次请求的结果，并同步更新内存里那一条。
 //
 // 只改内存里的那一条，不整表重读：这个函数每个请求都会调，重读一次就是一次全表
-// SELECT，而它自己刚发起过 UPDATE —— 高并发下正是这对读写在 WAL 上撞出 SQLITE_BUSY，
-// 也就是代理池被读空、请求退回直连的触发条件。
+// SELECT，而它自己刚发起过 UPDATE —— 高并发下这对读写最容易在旧 SQLite 的 WAL 上
+// 撞出 SQLITE_BUSY，也就是代理池被读空、请求退回直连的触发条件。换 PostgreSQL 后
+// 这个坑没了，但"不整表重读"仍然省一次全表扫描，保留。
 //
 // 代价是内存里的 FailCount++ 和 DB 的 fail_count+1 各算各的，别的进程直接改库会
 // 让两边漂移。单进程持有这个库，重启也会从 DB 重新加载，可以接受。
@@ -297,9 +298,9 @@ func recordProxyResult(id int64, success bool, errStr string) {
 	}
 	now := time.Now().Unix()
 	if success {
-		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=0, last_used=?, last_error='' WHERE id=?`, now, id)
+		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=0, last_used=$1, last_error='' WHERE id=$2`, now, id)
 	} else {
-		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=fail_count+1, last_used=?, last_error=? WHERE id=?`,
+		_, _ = getDB().Exec(`UPDATE proxies SET fail_count=fail_count+1, last_used=$1, last_error=$2 WHERE id=$3`,
 			now, errStr, id)
 	}
 	proxyMu.Lock()
@@ -332,12 +333,12 @@ func proxyCreate(name, url string, weight int) (int64, error) {
 	if weight <= 0 {
 		weight = 1
 	}
-	res, err := getDB().Exec(`INSERT INTO proxies(name, url, enabled, weight, created_at)
-        VALUES (?,?,?,?,?)`, name, url, 1, weight, time.Now().Unix())
+	var id int64
+	err := getDB().QueryRow(`INSERT INTO proxies(name, url, enabled, weight, created_at)
+        VALUES ($1,$2,$3,$4,$5) RETURNING id`, name, url, 1, weight, time.Now().Unix()).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-	id, _ := res.LastInsertId()
 	loadProxies()
 	return id, nil
 }
@@ -362,12 +363,14 @@ func proxyUpdate(id int64, name, url string, enabled *bool, weight *int) error {
 	q := `UPDATE proxies SET `
 	args := []interface{}{}
 	parts := []string{}
+	// PostgreSQL 用 $N 占位符，序号跟着 args 长度走，跟追加顺序严格一致。
+	ph := func() string { return "$" + strconv.Itoa(len(args)+1) }
 	if name != "" {
-		parts = append(parts, "name=?")
+		parts = append(parts, "name="+ph())
 		args = append(args, name)
 	}
 	if url != "" {
-		parts = append(parts, "url=?")
+		parts = append(parts, "url="+ph())
 		args = append(args, url)
 	}
 	if enabled != nil {
@@ -375,17 +378,17 @@ func proxyUpdate(id int64, name, url string, enabled *bool, weight *int) error {
 		if *enabled {
 			v = 1
 		}
-		parts = append(parts, "enabled=?")
+		parts = append(parts, "enabled="+ph())
 		args = append(args, v)
 	}
 	if weight != nil {
-		parts = append(parts, "weight=?")
+		parts = append(parts, "weight="+ph())
 		args = append(args, *weight)
 	}
 	if len(parts) == 0 {
 		return nil
 	}
-	q += joinComma(parts) + " WHERE id=?"
+	q += joinComma(parts) + " WHERE id=" + ph()
 	args = append(args, id)
 	_, err := getDB().Exec(q, args...)
 	if err == nil {
@@ -395,7 +398,7 @@ func proxyUpdate(id int64, name, url string, enabled *bool, weight *int) error {
 }
 
 func proxyDelete(id int64) error {
-	_, err := getDB().Exec(`DELETE FROM proxies WHERE id=?`, id)
+	_, err := getDB().Exec(`DELETE FROM proxies WHERE id=$1`, id)
 	if err == nil {
 		loadProxies()
 	}
@@ -403,7 +406,7 @@ func proxyDelete(id int64) error {
 }
 
 func proxyResetFailures(id int64) error {
-	_, err := getDB().Exec(`UPDATE proxies SET fail_count=0, last_error='' WHERE id=?`, id)
+	_, err := getDB().Exec(`UPDATE proxies SET fail_count=0, last_error='' WHERE id=$1`, id)
 	if err == nil {
 		loadProxies()
 	}

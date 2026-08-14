@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,21 @@ func maskKey(k string) string {
 	return k[:12] + "..." + k[len(k)-4:]
 }
 
+// redactDSN 把 PostgreSQL 连接串里的密码盖掉，只用于日志/横幅展示。
+func redactDSN(dsn string) string {
+	if i := strings.Index(dsn, "://"); i >= 0 {
+		rest := dsn[i+3:]
+		if j := strings.Index(rest, "@"); j >= 0 {
+			auth := rest[:j]
+			if k := strings.Index(auth, ":"); k >= 0 {
+				auth = auth[:k+1] + "****"
+			}
+			return dsn[:i+3] + auth + rest[j:]
+		}
+	}
+	return dsn
+}
+
 // Run 是进程入口，由根目录的 main.go 调用。
 func Run() {
 	port := flag.Int("port", 0, "listening port (default: 8083 or config.json)")
@@ -36,7 +52,7 @@ func Run() {
 	cookieFile := flag.String("cookie-file", "", "path to cookie file")
 	proxy := flag.String("proxy", "", "HTTP proxy fallback when proxy pool is empty")
 	impersonate := flag.String("impersonate", "", "TLS profile (chrome_146, chrome_133, firefox_147, ...)")
-	dbPath := flag.String("db", "", "SQLite path (default: ./data/gemini.db)")
+	dbPath := flag.String("db", "", "PostgreSQL DSN (default: $DATABASE_URL / config.json 的 database_url)")
 	adminToken := flag.String("admin-token", "", "admin token (empty = no auth, only safe on 127.0.0.1)")
 	apiKey := flag.String("api-key", "", "API key for /v1/* (locked). Empty = use kv-table key (auto-gen on first boot, mutable from admin UI)")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -53,6 +69,11 @@ func Run() {
 	}
 	if *port > 0 {
 		cfg.Port = *port
+	} else if envPort := os.Getenv("PORT"); envPort != "" {
+		// Render 等 PaaS 通过 PORT 注入实际监听端口。
+		if p, err := strconv.Atoi(envPort); err == nil {
+			cfg.Port = p
+		}
 	}
 	if *cookieFile != "" {
 		cfg.CookieFile = *cookieFile
@@ -178,7 +199,7 @@ func Run() {
 		}
 		fmt.Printf("  Admin UI:    http://localhost:%d/admin  (%s)\n", cfg.Port, authMode)
 	}
-	fmt.Printf("  DB:          %s\n", cfg.DBPath)
+	fmt.Printf("  DB:          %s\n", redactDSN(databaseDSN()))
 	fmt.Printf("  Models:      %v\n", modelNames)
 	fmt.Printf("  Cookie:      %s\n", cookieStatus)
 	fmt.Printf("  Proxy:       %s\n", proxyStatus)

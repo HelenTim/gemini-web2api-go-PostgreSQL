@@ -11,6 +11,24 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # `go test ./...` 需要一台 PostgreSQL（存储层已迁移到 pgx）。CI 里起一个
+    # 临时 postgres service，测试走 TEST_DATABASE_URL，用完即弃。
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gw2a
+          POSTGRES_PASSWORD: gw2a
+          POSTGRES_DB: gw2a
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gw2a"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgres://gw2a:gw2a@localhost:5432/gw2a?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +49,10 @@ jobs:
           echo "tag=$tag  internal/app/server.go=$code"
           [ "$tag" = "$code" ] || { echo "::error::tag $tag 与 internal/app/server.go 里的 $code 不一致"; exit 1; }
 
+      - run: go mod tidy
       - run: go test ./...
 
-      # CGO_ENABLED=0：SQLite 用的是 modernc.org/sqlite（纯 Go），
+      # CGO_ENABLED=0：依赖都是纯 Go（pgx 驱动 + tls-client），
       # 所以交叉编译不需要各平台的 C 工具链，直接 GOOS/GOARCH 就行。
       - name: Cross compile
         env:

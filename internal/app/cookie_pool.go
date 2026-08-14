@@ -102,13 +102,14 @@ func accountInsert(label, cookie, note string) (int64, error) {
 	if cookie == "" {
 		return 0, fmt.Errorf("cookie 不能为空")
 	}
-	res, err := getDB().Exec(
-		`INSERT INTO accounts(label, cookie, status, note, created_at) VALUES (?,?,?,?,?)`,
-		strings.TrimSpace(label), cookie, "enabled", strings.TrimSpace(note), time.Now().Unix())
+	var id int64
+	err := getDB().QueryRow(
+		`INSERT INTO accounts(label, cookie, status, note, created_at) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		strings.TrimSpace(label), cookie, "enabled", strings.TrimSpace(note), time.Now().Unix()).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	return id, nil
 }
 
 // accountList 返回池里全部账号，按 id 升序。
@@ -140,7 +141,7 @@ func accountByID(id int64) *CookieAccount {
 	var a CookieAccount
 	err := getDB().QueryRow(
 		`SELECT id, label, cookie, status, note, created_at, last_used_at, last_ok_at, last_error, fail_count, proxy_id
-		 FROM accounts WHERE id=?`, id).
+		 FROM accounts WHERE id=$1`, id).
 		Scan(&a.ID, &a.Label, &a.Cookie, &a.Status, &a.Note,
 			&a.CreatedAt, &a.LastUsedAt, &a.LastOkAt, &a.LastError, &a.FailCount, &a.ProxyID)
 	if err != nil {
@@ -151,7 +152,7 @@ func accountByID(id int64) *CookieAccount {
 
 // accountDelete 删除一条。
 func accountDelete(id int64) error {
-	_, err := getDB().Exec(`DELETE FROM accounts WHERE id=?`, id)
+	_, err := getDB().Exec(`DELETE FROM accounts WHERE id=$1`, id)
 	return err
 }
 
@@ -160,13 +161,13 @@ func accountSetStatus(id int64, status string) error {
 	if status != "enabled" && status != "disabled" {
 		return fmt.Errorf("非法状态 %q", status)
 	}
-	_, err := getDB().Exec(`UPDATE accounts SET status=? WHERE id=?`, status, id)
+	_, err := getDB().Exec(`UPDATE accounts SET status=$1 WHERE id=$2`, status, id)
 	return err
 }
 
 // accountUpdateMeta 改 label / note（不动 cookie 本身）。
 func accountUpdateMeta(id int64, label, note string) error {
-	_, err := getDB().Exec(`UPDATE accounts SET label=?, note=? WHERE id=?`,
+	_, err := getDB().Exec(`UPDATE accounts SET label=$1, note=$2 WHERE id=$3`,
 		strings.TrimSpace(label), strings.TrimSpace(note), id)
 	return err
 }
@@ -401,7 +402,7 @@ func pickCookieAccountExcept(skip map[int64]bool) (*CookieAccount, bool) {
 		if skip[a.ID] {
 			continue
 		}
-		_, _ = getDB().Exec(`UPDATE accounts SET last_used_at=? WHERE id=?`, time.Now().Unix(), a.ID)
+		_, _ = getDB().Exec(`UPDATE accounts SET last_used_at=$1 WHERE id=$2`, time.Now().Unix(), a.ID)
 		return &a, true
 	}
 	return nil, false
@@ -439,12 +440,12 @@ func markAccountResult(id int64, ok bool, errStr string) {
 	}
 	if ok {
 		_, _ = getDB().Exec(
-			`UPDATE accounts SET last_ok_at=?, fail_count=0, last_error='' WHERE id=?`,
+			`UPDATE accounts SET last_ok_at=$1, fail_count=0, last_error='' WHERE id=$2`,
 			time.Now().Unix(), id)
 		return
 	}
 	_, _ = getDB().Exec(
-		`UPDATE accounts SET fail_count=fail_count+1, last_error=? WHERE id=?`,
+		`UPDATE accounts SET fail_count=fail_count+1, last_error=$1 WHERE id=$2`,
 		truncate(errStr, 200), id)
 	autoDisableIfDead(id)
 }
@@ -467,13 +468,13 @@ const maxCookieAuthFailures = 3
 func autoDisableIfDead(id int64) {
 	var fails int64
 	var status string
-	err := getDB().QueryRow(`SELECT fail_count, status FROM accounts WHERE id=?`, id).
+	err := getDB().QueryRow(`SELECT fail_count, status FROM accounts WHERE id=$1`, id).
 		Scan(&fails, &status)
 	if err != nil || status != "enabled" || fails < maxCookieAuthFailures {
 		return
 	}
 	if _, err := getDB().Exec(
-		`UPDATE accounts SET status='disabled' WHERE id=? AND status='enabled'`, id); err == nil {
+		`UPDATE accounts SET status='disabled' WHERE id=$1 AND status='enabled'`, id); err == nil {
 		logf("[cookie] 账号 #%d 连续 %d 次鉴权失败，已自动停用", id, fails)
 	}
 }
@@ -542,7 +543,7 @@ func bindAccountProxy(accountID, proxyID int64) {
 	if accountID <= 0 {
 		return
 	}
-	_, _ = getDB().Exec(`UPDATE accounts SET proxy_id=? WHERE id=?`, proxyID, accountID)
+	_, _ = getDB().Exec(`UPDATE accounts SET proxy_id=$1 WHERE id=$2`, proxyID, accountID)
 }
 
 // accountDisplayName 面板/记录里显示的账号名，没填标签就用 #id。
@@ -629,11 +630,11 @@ func updateAccountCookie(id int64, cookie string) {
 		return
 	}
 	var cur string
-	if err := getDB().QueryRow(`SELECT cookie FROM accounts WHERE id=?`, id).Scan(&cur); err == nil {
+	if err := getDB().QueryRow(`SELECT cookie FROM accounts WHERE id=$1`, id).Scan(&cur); err == nil {
 		if got, want := cookieIdentity(cookie), cookieIdentity(cur); got != want {
 			logf("[cookie] 账号 #%d 的刷新结果身份对不上，已丢弃不写回", id)
 			return
 		}
 	}
-	_, _ = getDB().Exec(`UPDATE accounts SET cookie=? WHERE id=?`, cookie, id)
+	_, _ = getDB().Exec(`UPDATE accounts SET cookie=$1 WHERE id=$2`, cookie, id)
 }

@@ -1,0 +1,23 @@
+# Render Blueprint —— 一键部署 gemini-web2api-go
+#
+# 用法：
+#   1. 在 https://console.neon.tech/ 建一个免费 PostgreSQL，复制连接串。
+#   2. 把仓库推到 GitHub，然后在 Render 里选「New → Blueprint」导入本文件。
+#   3. 导入后到服务的 Environment 里，把 DATABASE_URL 填成 Neon 的连接串、
+#      ADMIN_TOKEN 填一个你自己的面板口令。
+#
+# 数据库走外部 PostgreSQL（Neon），Render 免费实例没有持久化磁盘，SQLite 存不住。
+services:
+  - type: web
+    name: gemini-web2api
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+        # 换成你的 Neon 连接串（自带 sslmode=require，别去掉）。
+        value: postgres://user:password@ep-xxx.ap-southeast-1.aws.neon.tech/db?sslmode=require
+      - key: ADMIN_TOKEN
+        sync: false
+        value: change-me-in-production

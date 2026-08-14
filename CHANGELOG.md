@@ -2,6 +2,26 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 4.4.0
+
+### 变更
+
+- **数据库从 SQLite 换成 PostgreSQL**。为在 Render 等无持久化磁盘的 PaaS 上部署，
+  存储层整体迁移到 PostgreSQL（驱动用 [jackc/pgx](https://github.com/jackc/pgx)，
+  纯 Go、CGO-free）：
+
+  - 连接串通过 `DATABASE_URL` 环境变量（或 `config.json` 的 `database_url` / `--db`）
+    提供；启动即幂等建表。
+  - SQL 语法同步迁移：`?` 占位符 → `$N`，`IFNULL` → `COALESCE`，
+    `INSERT OR REPLACE` → `INSERT … ON CONFLICT … DO UPDATE`，
+    `LastInsertId` → `RETURNING id`。
+  - 监听端口新增 `PORT` 环境变量支持（Render 自动注入）。
+  - 新增 `render.yaml`，配合 [Neon](https://console.neon.tech/) 的免费 PostgreSQL
+    可一键部署到 Render。
+
+  迁移说明：老 SQLite 数据**不会**自动搬过去。要保留历史记录，需要自行把 SQLite 里的
+  表导到 PostgreSQL；只求能用的话，直接开新库即可（首次启动自动建表）。
+
 ## 4.3.0
 
 ### 新增

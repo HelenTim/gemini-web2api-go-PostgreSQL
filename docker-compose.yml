@@ -22,17 +22,9 @@ services:
     #   - "8083"
     # 然后让其他容器加入下面的 default network 或自定义 network。
 
-    volumes:
-      # 用具名卷而不是 ./data:/data —— 镜像以 nonroot(uid 65532) 运行，而 bind mount
-      # 会用宿主目录的属主盖掉镜像里 /data 的属主。宿主上目录不存在时 Docker 自动建、
-      # 属主是 root，容器就写不进去，报 `unable to open database file (14)`。
-      # 具名卷由 Docker 从镜像继承属主，不会踩这个坑。
-      - gw2a-data:/data                           # SQLite + 历史记录持久化
-      # 一定要用 bind mount 的话，先把属主改过来：sudo chown -R 65532:65532 ./data
-      # - ./data:/data
-      # - ./cookie.txt:/app/cookie.txt:ro         # 可选：启动时把这个文件导入 Cookie 池
-
     environment:
+      # PostgreSQL 连接串。指向 Neon/Render/Supabase 给的 URL（或自建库）。
+      DATABASE_URL: "${DATABASE_URL}"
       # 面板登录 token。留空 = 面板不鉴权，只有在绑定 127.0.0.1 时才可接受。
       ADMIN_TOKEN: "${ADMIN_TOKEN:-change-me-in-production}"
       # 可选：锁定 /v1/* 的 API key，设了之后面板改不了。
@@ -40,9 +32,9 @@ services:
       # API_KEY: "sk-gemini-your-key"
       TZ: "${TZ:-UTC}"
 
-    # 镜像自带 CMD ["--db","/data/gemini.db","--port","8083"]，一般不用改。
-    # 只有要加参数时才写 command，写了就会整个覆盖掉默认值，别漏 --db。
-    # command: ["--db", "/data/gemini.db", "--port", "8083", "--cookie-file", "/app/cookie.txt"]
+    # 数据库现在走 PostgreSQL（DATABASE_URL），不再需要本地数据卷。
+    # 命令行参数一般不用加；要加的话写 command，会整个覆盖默认入口，别漏端口。
+    # command: ["--port", "8083"]
 
     healthcheck:
       test: ["CMD", "/app/gemini-web2api", "--version"]
@@ -56,5 +48,3 @@ services:
         max-size: "10m"
         max-file: "3"
 
-volumes:
-  gw2a-data:

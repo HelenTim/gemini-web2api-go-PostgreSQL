@@ -756,7 +756,7 @@ const pages = {
               <tbody></tbody>
             </table>
             <p class="lede" style="margin:14px 0 0;">
-              gemini-web2api-go · 单二进制 · SQLite · Chrome 146 指纹 · tiktoken cl100k_base 计费
+              gemini-web2api-go · 单二进制 · PostgreSQL · Chrome 146 指纹 · tiktoken cl100k_base 计费
             </p>
           </div>
         </div>
@@ -999,7 +999,7 @@ async function loadRtCfg() {
   const d = data.deploy || {};
   document.querySelector('#deployTable tbody').innerHTML = [
     ['监听', `${escapeHtml(d.host || '')}:${d.port}`, 'compose 的 ports + --port'],
-    ['数据库', escapeHtml(d.db_path || ''), 'compose 的 volumes + --db'],
+    ['数据库', escapeHtml(d.database_url || ''), 'DATABASE_URL 环境变量 / database_url'],
     ['Cookie 播种文件', d.cookie_file ? escapeHtml(d.cookie_file) : '<span class="badge muted">未配置</span>',
      '启动时把文件内容导入 Cookie 池；之后从「Cookie 池」页面管理'],
     ['面板鉴权', d.admin_auth ? '<span class="badge ok">已开启</span>'

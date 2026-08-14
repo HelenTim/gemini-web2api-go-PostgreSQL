@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 var (
@@ -18,30 +18,30 @@ var (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS proxies (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL,
     url          TEXT NOT NULL,
     enabled      INTEGER NOT NULL DEFAULT 1,
     weight       INTEGER NOT NULL DEFAULT 1,
     fail_count   INTEGER NOT NULL DEFAULT 0,
-    last_used    INTEGER,
+    last_used    BIGINT,
     last_error   TEXT,
-    created_at   INTEGER NOT NULL
+    created_at   BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS requests (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts              INTEGER NOT NULL,
+    id              BIGSERIAL PRIMARY KEY,
+    ts              BIGINT NOT NULL,
     model           TEXT NOT NULL,
     upstream_model  TEXT,
-    proxy_id        INTEGER,
+    proxy_id        BIGINT,
     proxy_name      TEXT,
-    account_id      INTEGER,
+    account_id      BIGINT,
     account_label   TEXT,
     status          INTEGER NOT NULL,
     error           TEXT,
-    ttfb_ms         INTEGER,
-    total_ms        INTEGER NOT NULL,
+    ttfb_ms         BIGINT,
+    total_ms        BIGINT NOT NULL,
     prompt_chars    INTEGER NOT NULL,
     response_chars  INTEGER NOT NULL,
     prompt_tokens   INTEGER NOT NULL,
@@ -55,42 +55,42 @@ CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model);
 
 -- Hourly aggregate (永久保留，明细只留 30 天)
 CREATE TABLE IF NOT EXISTS stats_hourly (
-    bucket          INTEGER NOT NULL,    -- unix ts of hour start
+    bucket          BIGINT NOT NULL,    -- unix ts of hour start
     model           TEXT NOT NULL,
-    proxy_id        INTEGER NOT NULL,    -- 0 = no proxy
+    proxy_id        BIGINT NOT NULL,    -- 0 = no proxy
     requests        INTEGER NOT NULL DEFAULT 0,
     successes       INTEGER NOT NULL DEFAULT 0,
     failures        INTEGER NOT NULL DEFAULT 0,
-    total_ms        INTEGER NOT NULL DEFAULT 0,
+    total_ms        BIGINT NOT NULL DEFAULT 0,
     p50_ms          INTEGER NOT NULL DEFAULT 0,
     p95_ms          INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens   INTEGER NOT NULL DEFAULT 0,
-    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens   BIGINT NOT NULL DEFAULT 0,
+    output_tokens   BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (bucket, model, proxy_id)
 );
 CREATE INDEX IF NOT EXISTS idx_hourly_bucket ON stats_hourly(bucket);
 
 -- Daily aggregate (永久保留)
 CREATE TABLE IF NOT EXISTS stats_daily (
-    bucket          INTEGER NOT NULL,
+    bucket          BIGINT NOT NULL,
     model           TEXT NOT NULL,
-    proxy_id        INTEGER NOT NULL,
+    proxy_id        BIGINT NOT NULL,
     requests        INTEGER NOT NULL DEFAULT 0,
     successes       INTEGER NOT NULL DEFAULT 0,
     failures        INTEGER NOT NULL DEFAULT 0,
-    total_ms        INTEGER NOT NULL DEFAULT 0,
+    total_ms        BIGINT NOT NULL DEFAULT 0,
     p50_ms          INTEGER NOT NULL DEFAULT 0,
     p95_ms          INTEGER NOT NULL DEFAULT 0,
-    prompt_tokens   INTEGER NOT NULL DEFAULT 0,
-    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens   BIGINT NOT NULL DEFAULT 0,
+    output_tokens   BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (bucket, model, proxy_id)
 );
 CREATE INDEX IF NOT EXISTS idx_daily_bucket ON stats_daily(bucket);
 
 CREATE TABLE IF NOT EXISTS sessions (
     token        TEXT PRIMARY KEY,
-    created_at   INTEGER NOT NULL,
-    expires_at   INTEGER NOT NULL
+    created_at   BIGINT NOT NULL,
+    expires_at   BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS kv (
@@ -101,34 +101,42 @@ CREATE TABLE IF NOT EXISTS kv (
 -- Cookie 池：每行一个 Google 登录态账号（一整串 gemini.google.com cookie）。
 -- 请求时按 last_used_at 最久优先挑一个 enabled 的，天然轮转 + 分散单 IP 上限。
 CREATE TABLE IF NOT EXISTS accounts (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            BIGSERIAL PRIMARY KEY,
     label         TEXT NOT NULL DEFAULT '',      -- 用户可命名（一般填邮箱）
     cookie        TEXT NOT NULL,                 -- 完整 cookie 串 "k=v; k=v"
     status        TEXT NOT NULL DEFAULT 'enabled', -- enabled | disabled
     note          TEXT NOT NULL DEFAULT '',
-    created_at    INTEGER NOT NULL,
-    last_used_at  INTEGER NOT NULL DEFAULT 0,     -- 上次被挑中发请求的时刻
-    last_ok_at    INTEGER NOT NULL DEFAULT 0,     -- 上次请求成功的时刻
+    created_at    BIGINT NOT NULL,
+    last_used_at  BIGINT NOT NULL DEFAULT 0,     -- 上次被挑中发请求的时刻
+    last_ok_at    BIGINT NOT NULL DEFAULT 0,     -- 上次请求成功的时刻
     last_error    TEXT NOT NULL DEFAULT '',
-    fail_count    INTEGER NOT NULL DEFAULT 0,     -- 连续失败次数（成功归零）
-    proxy_id      INTEGER NOT NULL DEFAULT 0      -- 绑定的出口，0 = 还没绑
+    fail_count    INTEGER NOT NULL DEFAULT 0,    -- 连续失败次数（成功归零）
+    proxy_id      BIGINT NOT NULL DEFAULT 0      -- 绑定的出口，0 = 还没绑
 );
 CREATE INDEX IF NOT EXISTS idx_accounts_pick ON accounts(status, last_used_at);
 `
 
+// databaseDSN 返回最终要连的 PostgreSQL 连接串：database_url 配置 > DATABASE_URL
+// 环境变量 > db_path（兼容旧配置，现在直接填 DSN）。
+func databaseDSN() string {
+	if cfg.DatabaseURL != "" {
+		return cfg.DatabaseURL
+	}
+	if d := os.Getenv("DATABASE_URL"); d != "" {
+		return d
+	}
+	return cfg.DBPath
+}
+
 func getDB() *sql.DB {
 	dbOnce.Do(func() {
-		path := cfg.DBPath
-		if path == "" {
-			path = "./data/gemini.db"
-		}
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "[db] 建目录 %s 失败: %v\n%s", dir, err, dbPermHint(dir))
+		dsn := databaseDSN()
+		if dsn == "" {
+			fmt.Fprintln(os.Stderr, "[db] 未配置数据库：请设置 DATABASE_URL（或 database_url / --db）"+
+				"指向 PostgreSQL，例如 postgres://user:pass@host:5432/db")
 			os.Exit(1)
 		}
-		dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
-		conn, err := sql.Open("sqlite", dsn)
+		conn, err := sql.Open("pgx", dsn)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[db] open failed: %v\n", err)
 			os.Exit(1)
@@ -136,29 +144,39 @@ func getDB() *sql.DB {
 		conn.SetMaxOpenConns(8)
 		conn.SetMaxIdleConns(4)
 		conn.SetConnMaxLifetime(0)
-		if _, err := conn.Exec(schema); err != nil {
-			// 这里最常见的是 SQLITE_CANTOPEN(14)：目录存在但当前用户写不进去。
-			// 光报 "unable to open database file (14)" 没人猜得到是权限，所以把
-			// 判据和解法一起打出来。
-			fmt.Fprintf(os.Stderr, "[db] 初始化 %s 失败: %v\n%s", path, err, dbPermHint(dir))
+		// 启动即建表（幂等）。托管 PostgreSQL（Neon / Render / Supabase）的连接串
+		// 一般都带 sslmode=require，直接用即可。
+		if err := execSchema(conn); err != nil {
+			fmt.Fprintf(os.Stderr, "[db] 初始化失败: %v\n", err)
 			os.Exit(1)
 		}
-		// Migration: drop legacy prompt_preview / response_preview columns
-		// from older deployments. SQLite 3.35+ supports DROP COLUMN.
-		// Errors are ignored — columns may already be absent.
-		// 老库补上服务端自报的模型名列（列已存在时报错，忽略）
-		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN upstream_model TEXT`)
-		// 老库补上 cookie 归属列（列已存在时报错，忽略）
-		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN account_id INTEGER`)
-		_, _ = conn.Exec(`ALTER TABLE requests ADD COLUMN account_label TEXT`)
-		// 老库补上账号↔出口绑定列
-		_, _ = conn.Exec(`ALTER TABLE accounts ADD COLUMN proxy_id INTEGER NOT NULL DEFAULT 0`)
-		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN prompt_preview`)
-		_, _ = conn.Exec(`ALTER TABLE requests DROP COLUMN response_preview`)
 		db = conn
-		logf("[db] opened %s", path)
+		logf("[db] connected to PostgreSQL")
 	})
 	return db
+}
+
+// execSchema 逐条执行建表语句。pgx 的扩展协议（默认）不支持一次 Exec 塞多条语句，
+// 所以按分号拆开逐条跑 —— 每条都是幂等的 CREATE ... IF NOT EXISTS。
+func execSchema(conn *sql.DB) error {
+	for _, stmt := range strings.Split(schema, ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// int64Ptr 把可空的 *int64 转成 database/sql 能直接吃的值（nil 即 NULL）。
+func int64Ptr(v *int64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 // Request rows ───────────────────────────────────────────────────────────────
@@ -190,9 +208,9 @@ func insertRequest(r *RequestRow) {
          status, error, ttfb_ms, total_ms,
          prompt_chars, response_chars, prompt_tokens, output_tokens,
          endpoint, stream)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		r.TS, r.Model, r.UpstreamModel, r.ProxyID, r.ProxyName, r.AccountID, r.AccountLabel,
-		r.Status, r.Error, r.TTFBMs, r.TotalMs,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		r.TS, r.Model, r.UpstreamModel, int64Ptr(r.ProxyID), r.ProxyName, int64Ptr(r.AccountID), r.AccountLabel,
+		r.Status, r.Error, int64Ptr(r.TTFBMs), r.TotalMs,
 		r.PromptChars, r.ResponseChars, r.PromptTokens, r.OutputTokens,
 		r.Endpoint, r.Stream)
 	if err != nil {
@@ -204,7 +222,8 @@ func insertRequest(r *RequestRow) {
 
 func createSession(token string, ttl time.Duration) {
 	now := time.Now().Unix()
-	_, err := getDB().Exec(`INSERT OR REPLACE INTO sessions(token, created_at, expires_at) VALUES (?,?,?)`,
+	_, err := getDB().Exec(`INSERT INTO sessions(token, created_at, expires_at) VALUES ($1,$2,$3)
+		ON CONFLICT(token) DO UPDATE SET created_at=excluded.created_at, expires_at=excluded.expires_at`,
 		token, now, now+int64(ttl.Seconds()))
 	if err != nil {
 		logf("[db] session insert failed: %v", err)
@@ -216,7 +235,7 @@ func validSession(token string) bool {
 		return false
 	}
 	var exp int64
-	err := getDB().QueryRow(`SELECT expires_at FROM sessions WHERE token=?`, token).Scan(&exp)
+	err := getDB().QueryRow(`SELECT expires_at FROM sessions WHERE token=$1`, token).Scan(&exp)
 	if err != nil {
 		return false
 	}
@@ -227,30 +246,13 @@ func validSession(token string) bool {
 
 func kvGet(k string) string {
 	var v string
-	if err := getDB().QueryRow(`SELECT v FROM kv WHERE k=?`, k).Scan(&v); err != nil {
+	if err := getDB().QueryRow(`SELECT v FROM kv WHERE k=$1`, k).Scan(&v); err != nil {
 		return ""
 	}
 	return v
 }
 
 func kvSet(k, v string) error {
-	_, err := getDB().Exec(`INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, k, v)
+	_, err := getDB().Exec(`INSERT INTO kv(k,v) VALUES($1,$2) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, k, v)
 	return err
-}
-
-// dbPermHint 在数据库打不开时给出可操作的提示。
-//
-// 判据：容器镜像是 distroless + USER nonroot（uid 65532），而 bind mount 会用宿主
-// 目录的属主整个盖掉镜像里 /data 的属主。宿主上目录不存在时 Docker 自动建、属主是
-// root，于是容器里的 65532 写不进去 —— 实测这就是 `unable to open database file (14)`
-// 的成因（同一条命令只把属主 chown 成 65532 就能起来）。
-func dbPermHint(dir string) string {
-	uid := os.Getuid() // Windows 上返回 -1，那边不涉及这个问题
-	return fmt.Sprintf(""+
-		"      当前进程 uid=%d，写不进目录 %s。\n"+
-		"      Docker 部署最常见的原因是 bind mount 的宿主目录属主是 root，\n"+
-		"      而镜像以 nonroot(65532) 运行。两种解法：\n"+
-		"        1) 改用具名卷（推荐）：volumes 写 gw2a-data:/data\n"+
-		"        2) 保留 bind mount 就把属主改过来：sudo chown -R 65532:65532 ./data\n",
-		uid, dir)
 }

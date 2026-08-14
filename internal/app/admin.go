@@ -90,7 +90,7 @@ func handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookieName); err == nil {
-		_, _ = getDB().Exec(`DELETE FROM sessions WHERE token=?`, c.Value)
+		_, _ = getDB().Exec(`DELETE FROM sessions WHERE token=$1`, c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
 	writeJSON(w, 200, map[string]bool{"ok": true})
@@ -108,10 +108,10 @@ func handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	_ = getDB().QueryRow(`SELECT COUNT(*),
         SUM(CASE WHEN status=200 THEN 1 ELSE 0 END),
         SUM(CASE WHEN status<>200 THEN 1 ELSE 0 END),
-        IFNULL(SUM(total_ms),0),
-        IFNULL(SUM(prompt_tokens),0),
-        IFNULL(SUM(output_tokens),0)
-        FROM requests WHERE ts >= ?`, since).Scan(&total, &success, &fail, &sumMs, &sumPT, &sumOT)
+        COALESCE(SUM(total_ms),0),
+        COALESCE(SUM(prompt_tokens),0),
+        COALESCE(SUM(output_tokens),0)
+        FROM requests WHERE ts >= $1`, since).Scan(&total, &success, &fail, &sumMs, &sumPT, &sumOT)
 
 	stats["window_hours"] = hours
 	stats["total_requests"] = total
@@ -131,9 +131,9 @@ func handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	// per-model breakdown
 	rows, _ := getDB().Query(`SELECT model, COUNT(*),
         SUM(CASE WHEN status=200 THEN 1 ELSE 0 END),
-        IFNULL(AVG(total_ms),0),
-        IFNULL(SUM(prompt_tokens),0), IFNULL(SUM(output_tokens),0)
-        FROM requests WHERE ts >= ? GROUP BY model ORDER BY 2 DESC`, since)
+        COALESCE(AVG(total_ms),0),
+        COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(output_tokens),0)
+        FROM requests WHERE ts >= $1 GROUP BY model ORDER BY 2 DESC`, since)
 	var byModel []map[string]interface{}
 	if rows != nil {
 		for rows.Next() {
@@ -157,10 +157,10 @@ func handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	stats["by_model"] = byModel
 
 	// per-proxy breakdown
-	prows, _ := getDB().Query(`SELECT IFNULL(proxy_name,'(direct)') as p, COUNT(*),
+	prows, _ := getDB().Query(`SELECT COALESCE(proxy_name,'(direct)') as p, COUNT(*),
         SUM(CASE WHEN status=200 THEN 1 ELSE 0 END),
-        IFNULL(AVG(total_ms),0)
-        FROM requests WHERE ts >= ? GROUP BY p ORDER BY 2 DESC`, since)
+        COALESCE(AVG(total_ms),0)
+        FROM requests WHERE ts >= $1 GROUP BY p ORDER BY 2 DESC`, since)
 	var byProxy []map[string]interface{}
 	if prows != nil {
 		for prows.Next() {
@@ -216,7 +216,7 @@ func handleAdminTimeseries(w http.ResponseWriter, r *http.Request) {
 		// pull from stats_daily
 		r2, err := getDB().Query(`SELECT bucket, SUM(requests), SUM(successes), AVG(p50_ms), AVG(p95_ms),
             SUM(prompt_tokens), SUM(output_tokens)
-            FROM stats_daily WHERE bucket >= ? GROUP BY bucket ORDER BY bucket`, since)
+            FROM stats_daily WHERE bucket >= $1 GROUP BY bucket ORDER BY bucket`, since)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -226,7 +226,7 @@ func handleAdminTimeseries(w http.ResponseWriter, r *http.Request) {
 		// stats_hourly
 		r2, err := getDB().Query(`SELECT bucket, SUM(requests), SUM(successes), AVG(p50_ms), AVG(p95_ms),
             SUM(prompt_tokens), SUM(output_tokens)
-            FROM stats_hourly WHERE bucket >= ? GROUP BY bucket ORDER BY bucket`, since)
+            FROM stats_hourly WHERE bucket >= $1 GROUP BY bucket ORDER BY bucket`, since)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -238,8 +238,8 @@ func handleAdminTimeseries(w http.ResponseWriter, r *http.Request) {
             COUNT(*),
             SUM(CASE WHEN status=200 THEN 1 ELSE 0 END),
             0, 0,
-            IFNULL(SUM(prompt_tokens),0), IFNULL(SUM(output_tokens),0)
-            FROM requests WHERE ts >= ? GROUP BY b ORDER BY b`, since)
+            COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(output_tokens),0)
+            FROM requests WHERE ts >= $1 GROUP BY b ORDER BY b`, since)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -279,14 +279,15 @@ func handleAdminRequests(w http.ResponseWriter, r *http.Request) {
 	model := r.URL.Query().Get("model")
 	status := r.URL.Query().Get("status")
 
-	q := `SELECT id, ts, model, IFNULL(upstream_model,''), IFNULL(proxy_id,0), IFNULL(proxy_name,''),
-        IFNULL(account_id,0), IFNULL(account_label,''),
-        status, IFNULL(error,''), IFNULL(ttfb_ms,0), total_ms,
+	q := `SELECT id, ts, model, COALESCE(upstream_model,''), COALESCE(proxy_id,0), COALESCE(proxy_name,''),
+        COALESCE(account_id,0), COALESCE(account_label,''),
+        status, COALESCE(error,''), COALESCE(ttfb_ms,0), total_ms,
         prompt_chars, response_chars, prompt_tokens, output_tokens,
-        IFNULL(endpoint,''), stream FROM requests WHERE 1=1`
+        COALESCE(endpoint,''), stream FROM requests WHERE 1=1`
 	args := []interface{}{}
+	ph := func() string { return "$" + strconv.Itoa(len(args)+1) }
 	if model != "" {
-		q += " AND model=?"
+		q += " AND model=" + ph()
 		args = append(args, model)
 	}
 	if status == "ok" {
@@ -294,7 +295,7 @@ func handleAdminRequests(w http.ResponseWriter, r *http.Request) {
 	} else if status == "fail" {
 		q += " AND status<>200"
 	}
-	q += " ORDER BY id DESC LIMIT ? OFFSET ?"
+	q += " ORDER BY id DESC LIMIT $" + strconv.Itoa(len(args)+1) + " OFFSET $" + strconv.Itoa(len(args)+2)
 	args = append(args, limit, offset)
 
 	rows, err := getDB().Query(q, args...)
@@ -342,7 +343,7 @@ func handleAdminRequests(w http.ResponseWriter, r *http.Request) {
 	cq := "SELECT COUNT(*) FROM requests WHERE 1=1"
 	cargs := []interface{}{}
 	if model != "" {
-		cq += " AND model=?"
+		cq += " AND model=$1"
 		cargs = append(cargs, model)
 	}
 	if status == "ok" {
@@ -624,11 +625,11 @@ func handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 			"models": modelNamesSorted(),
 			// 部署期配置只读展示，改这些要动 docker-compose.yml 并重启
 			"deploy": map[string]interface{}{
-				"host":        cfg.Host,
-				"port":        cfg.Port,
-				"db_path":     cfg.DBPath,
-				"cookie_file": cfg.CookieFile,
-				"admin_auth":  cfg.AdminToken != "",
+				"host":         cfg.Host,
+				"port":         cfg.Port,
+				"database_url": redactDSN(databaseDSN()),
+				"cookie_file":  cfg.CookieFile,
+				"admin_auth":   cfg.AdminToken != "",
 				// 面板的部署配置表要展示 Key 是否被启动参数锁死
 				"api_key_locked": apiKeyLocked,
 			},
@@ -690,8 +691,8 @@ func classifyError(errStr string) string {
 // errorBreakdown 统计窗口内各类错误的次数。
 func errorBreakdown(since int64) []map[string]interface{} {
 	rows, err := getDB().Query(
-		`SELECT IFNULL(error,''), COUNT(*) FROM requests
-         WHERE ts >= ? AND status <> 200 GROUP BY error`, since)
+		`SELECT COALESCE(error,''), COUNT(*) FROM requests
+         WHERE ts >= $1 AND status <> 200 GROUP BY error`, since)
 	if err != nil || rows == nil {
 		return nil
 	}

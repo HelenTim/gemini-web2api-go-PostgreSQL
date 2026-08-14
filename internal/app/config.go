@@ -18,7 +18,10 @@ type Config struct {
 	CookieFile     string `json:"cookie_file"`
 	Proxy          string `json:"proxy"` // 只用于启动时播种代理池，见 seedProxiesFromConfig
 	Impersonate    string `json:"impersonate"`
-	DBPath         string `json:"db_path"`
+	// PostgreSQL 连接串（Neon / Render 等托管库给的就是这种 URL）。
+	// 留空时依次回退到 DATABASE_URL 环境变量、db_path（兼容旧配置）。
+	DatabaseURL    string `json:"database_url"`
+	DBPath         string `json:"db_path"` // 已废弃：迁移后存 PostgreSQL DSN，见 getDB
 	AdminToken     string `json:"admin_token"`
 	AdminEnabled   bool   `json:"admin_enabled"`
 	RetentionDays  int    `json:"retention_days"`
@@ -59,7 +62,8 @@ func defaultConfig() Config {
 		CookieFile:     "",
 		Proxy:          "",
 		Impersonate:    "chrome_146",
-		DBPath:         "./data/gemini.db",
+		DatabaseURL:    "",
+		DBPath:         "",
 		AdminToken:     "",
 		AdminEnabled:   true,
 		RetentionDays:  30,
