@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +15,11 @@ var (
 	dbOnce sync.Once
 )
 
-const schema = `
-CREATE TABLE IF NOT EXISTS proxies (
+// schemaStmts 是建表语句清单，逐条执行。pgx 的扩展协议（默认）不支持一次 Exec
+// 塞多条语句，所以拆成切片；每条都是幂等的 CREATE ... IF NOT EXISTS。
+// 注意别用 strings.Split(…, ";") 去切 —— 注释里就带分号（"k=v; k=v"），会截断。
+var schemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS proxies (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL,
     url          TEXT NOT NULL,
@@ -27,9 +29,9 @@ CREATE TABLE IF NOT EXISTS proxies (
     last_used    BIGINT,
     last_error   TEXT,
     created_at   BIGINT NOT NULL
-);
+)`,
 
-CREATE TABLE IF NOT EXISTS requests (
+	`CREATE TABLE IF NOT EXISTS requests (
     id              BIGSERIAL PRIMARY KEY,
     ts              BIGINT NOT NULL,
     model           TEXT NOT NULL,
@@ -48,13 +50,13 @@ CREATE TABLE IF NOT EXISTS requests (
     output_tokens   INTEGER NOT NULL,
     endpoint        TEXT,
     stream          INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts);
-CREATE INDEX IF NOT EXISTS idx_requests_proxy ON requests(proxy_id);
-CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model);
+)`,
+	`CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts)`,
+	`CREATE INDEX IF NOT EXISTS idx_requests_proxy ON requests(proxy_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_requests_model ON requests(model)`,
 
--- Hourly aggregate (永久保留，明细只留 30 天)
-CREATE TABLE IF NOT EXISTS stats_hourly (
+	// Hourly aggregate（永久保留，明细只留 30 天）
+	`CREATE TABLE IF NOT EXISTS stats_hourly (
     bucket          BIGINT NOT NULL,    -- unix ts of hour start
     model           TEXT NOT NULL,
     proxy_id        BIGINT NOT NULL,    -- 0 = no proxy
@@ -67,11 +69,11 @@ CREATE TABLE IF NOT EXISTS stats_hourly (
     prompt_tokens   BIGINT NOT NULL DEFAULT 0,
     output_tokens   BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (bucket, model, proxy_id)
-);
-CREATE INDEX IF NOT EXISTS idx_hourly_bucket ON stats_hourly(bucket);
+)`,
+	`CREATE INDEX IF NOT EXISTS idx_hourly_bucket ON stats_hourly(bucket)`,
 
--- Daily aggregate (永久保留)
-CREATE TABLE IF NOT EXISTS stats_daily (
+	// Daily aggregate（永久保留）
+	`CREATE TABLE IF NOT EXISTS stats_daily (
     bucket          BIGINT NOT NULL,
     model           TEXT NOT NULL,
     proxy_id        BIGINT NOT NULL,
@@ -84,23 +86,23 @@ CREATE TABLE IF NOT EXISTS stats_daily (
     prompt_tokens   BIGINT NOT NULL DEFAULT 0,
     output_tokens   BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (bucket, model, proxy_id)
-);
-CREATE INDEX IF NOT EXISTS idx_daily_bucket ON stats_daily(bucket);
+)`,
+	`CREATE INDEX IF NOT EXISTS idx_daily_bucket ON stats_daily(bucket)`,
 
-CREATE TABLE IF NOT EXISTS sessions (
+	`CREATE TABLE IF NOT EXISTS sessions (
     token        TEXT PRIMARY KEY,
     created_at   BIGINT NOT NULL,
     expires_at   BIGINT NOT NULL
-);
+)`,
 
-CREATE TABLE IF NOT EXISTS kv (
+	`CREATE TABLE IF NOT EXISTS kv (
     k TEXT PRIMARY KEY,
     v TEXT
-);
+)`,
 
--- Cookie 池：每行一个 Google 登录态账号（一整串 gemini.google.com cookie）。
--- 请求时按 last_used_at 最久优先挑一个 enabled 的，天然轮转 + 分散单 IP 上限。
-CREATE TABLE IF NOT EXISTS accounts (
+	// Cookie 池：每行一个 Google 登录态账号（一整串 gemini.google.com cookie）。
+	// 请求时按 last_used_at 最久优先挑一个 enabled 的，天然轮转 + 分散单 IP 上限。
+	`CREATE TABLE IF NOT EXISTS accounts (
     id            BIGSERIAL PRIMARY KEY,
     label         TEXT NOT NULL DEFAULT '',      -- 用户可命名（一般填邮箱）
     cookie        TEXT NOT NULL,                 -- 完整 cookie 串 "k=v; k=v"
@@ -112,9 +114,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_error    TEXT NOT NULL DEFAULT '',
     fail_count    INTEGER NOT NULL DEFAULT 0,    -- 连续失败次数（成功归零）
     proxy_id      BIGINT NOT NULL DEFAULT 0      -- 绑定的出口，0 = 还没绑
-);
-CREATE INDEX IF NOT EXISTS idx_accounts_pick ON accounts(status, last_used_at);
-`
+)`,
+	`CREATE INDEX IF NOT EXISTS idx_accounts_pick ON accounts(status, last_used_at)`,
+}
 
 // databaseDSN 返回最终要连的 PostgreSQL 连接串：database_url 配置 > DATABASE_URL
 // 环境变量 > db_path（兼容旧配置，现在直接填 DSN）。
@@ -156,14 +158,9 @@ func getDB() *sql.DB {
 	return db
 }
 
-// execSchema 逐条执行建表语句。pgx 的扩展协议（默认）不支持一次 Exec 塞多条语句，
-// 所以按分号拆开逐条跑 —— 每条都是幂等的 CREATE ... IF NOT EXISTS。
+// execSchema 逐条执行 schemaStmts 里的建表语句。
 func execSchema(conn *sql.DB) error {
-	for _, stmt := range strings.Split(schema, ";") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
+	for _, stmt := range schemaStmts {
 		if _, err := conn.Exec(stmt); err != nil {
 			return err
 		}
