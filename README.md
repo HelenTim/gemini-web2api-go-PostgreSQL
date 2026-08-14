@@ -1,3 +1,12 @@
+#项目部署流程
+1、打开 render.com →右上角 New → Blueprint
+2、选你的 GitHub 仓库，导入仓库根目录的 render.yaml/
+3、导入后进服务 → Environment，填两个变量：
+- DATABASE_URL = 上面 Neon 的连接串（PostgreSQL数据库）
+- ADMIN_TOKEN = 你自己设一个面板口令（登录密码）
+第三步：验证
+
+
 # gemini-web2api-go
 
 <img src="docs/banner.svg" alt="gemini-web2api-go" width="100%">
